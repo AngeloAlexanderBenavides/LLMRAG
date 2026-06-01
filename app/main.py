@@ -16,9 +16,9 @@ app.mount("/static", StaticFiles(directory=os.path.join(base_dir, "static")), na
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
+        "index.html",
+        {
+            "request": request,
             "user_name": "Prueba",
             "user_role": "Example",
             "app_name": "IA_Bot",
