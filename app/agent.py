@@ -96,18 +96,35 @@ def _chat_with_ollama(messages: list[dict], temperature: float = 0.0, retries: i
 
 
 def clasificar_pregunta(pregunta: str) -> str:
+    # Todo es clasificado mediante el LLM (Inteligencia Artificial) de Ollama, sin filtros de código (sin cosas quemadas).
+    prompt_sistema = (
+        "Tu única tarea es clasificar la entrada del usuario en una sola palabra en mayúsculas, eligiendo estrictamente de esta lista:\n"
+        "1. SALUDO\n"
+        "2. INCOMPLETA\n"
+        "3. VARIABLE\n"
+        "4. FIJA\n\n"
+        "Guía de clasificación con ejemplos:\n\n"
+        "- SALUDO:\n"
+        "  * Mensajes de saludo, despedida o cortesía breves y sencillos sin una consulta o pregunta sustancial.\n"
+        "  * Ejemplos: 'Hola', 'Buenos días', 'Buenas tardes', 'Hola, cómo estás?', 'Saludos', 'hey', 'hi', 'hello', 'que tal', 'como va'.\n"
+        "  * Si la entrada es 'Hola', tu respuesta DEBE ser 'SALUDO'.\n\n"
+        "- INCOMPLETA:\n"
+        "  * Entradas extremadamente cortas (de una o dos palabras), fragmentos cortados, signos de puntuación sueltos o palabras sueltas sin sentido claro ni verbo que no permiten dar una respuesta informativa.\n"
+        "  * Ejemplos: 'Que', 'Por', 'a', 'entonces', 'de', 'cómo', '?', '...', 'q', 'k', 'quien', 'por que', 'y'.\n"
+        "  * Si la entrada es 'Que' o '¿Que?', tu respuesta DEBE ser 'INCOMPLETA'.\n\n"
+        "- VARIABLE:\n"
+        "  * Preguntas sobre información dinámica o en tiempo real que depende del día, la hora, el clima actual, noticias del día o cotizaciones financieras en vivo.\n"
+        "  * Ejemplos: '¿Qué hora es?', '¿Cómo estará el clima hoy?', 'noticias de hoy sobre fútbol', '¿quién ganó ayer?'.\n\n"
+        "- FIJA:\n"
+        "  * Preguntas o consultas sobre conocimiento e información estables o históricos que no cambian con el tiempo (conceptos teóricos, hechos históricos, biografías, recetas de cocina estables, etc.).\n"
+        "  * Ejemplos: '¿Qué es la fotosíntesis?', '¿Quién descubrió América?', 'capital de Francia', '¿cómo funciona el motor?'.\n\n"
+        "Regla de salida obligatoria:\n"
+        "- Responde únicamente con una palabra de las cuatro opciones: SALUDO, INCOMPLETA, VARIABLE o FIJA.\n"
+        "- NO incluyas introducciones, explicaciones, justificaciones ni signos de puntuación."
+    )
+
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Clasifica la entrada en una sola palabra: VARIABLE, FIJA, SALUDO o INCOMPLETA. "
-                "SALUDO = mensajes de saludo o apertura sin pregunta concreta. "
-                "INCOMPLETA = entradas muy cortas o cortadas que no permiten responder con precisión. "
-                "VARIABLE = depende de fecha, hora, noticias, clima, precios o estado actual. "
-                "FIJA = hechos históricos, definiciones o conocimiento estable. "
-                "Responde exactamente con una sola palabra, sin explicación."
-            ),
-        },
+        {"role": "system", "content": prompt_sistema},
         {"role": "user", "content": pregunta},
     ]
 
@@ -122,28 +139,30 @@ def clasificar_pregunta(pregunta: str) -> str:
             return "variable"
         if "FIJA" in respuesta:
             return "fija"
-        respuesta = _chat_with_ollama(
+        
+        # Reintento con un prompt aún más directo si el modelo falló el formato en el primer intento
+        respuesta_reintento = _chat_with_ollama(
             [
                 {
                     "role": "system",
-                    "content": "Responde solo con una de estas palabras: VARIABLE, FIJA, SALUDO, INCOMPLETA.",
+                    "content": "Responde únicamente con una de estas cuatro palabras en mayúsculas: SALUDO, INCOMPLETA, VARIABLE, FIJA.",
                 },
                 {"role": "user", "content": pregunta},
             ],
             temperature=0.0,
         ).upper().strip()
-        if "SALUDO" in respuesta:
+        if "SALUDO" in respuesta_reintento:
             return "saludo"
-        if "INCOMPLETA" in respuesta:
+        if "INCOMPLETA" in respuesta_reintento:
             return "incompleta"
-        if "VARIABLE" in respuesta:
+        if "VARIABLE" in respuesta_reintento:
             return "variable"
-        if "FIJA" in respuesta:
+        if "FIJA" in respuesta_reintento:
             return "fija"
     except Exception as e:
         logger.warning("Error classifying question type with Ollama: %s", e)
 
-    # Fallback conservador: si no podemos clasificar, tratamos la pregunta como fija.
+    # Fallback conservador
     return "fija"
 
 
