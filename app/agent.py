@@ -69,17 +69,30 @@ def buscar_en_internet(query: str) -> str:
         return ""
 
 
-def _chat_with_ollama(messages: list[dict]) -> str:
+def _chat_with_ollama(messages: list[dict], temperature: float = 0.0, retries: int = 2) -> str:
     if ollama is None:
         raise RuntimeError(
             "Ollama no está disponible en este entorno. Instala y ejecuta Ollama localmente para obtener respuestas del modelo."
         )
 
-    respuesta = ollama.chat(
-        model=os.environ.get("OLLAMA_MODEL", "llama3:latest"),
-        messages=messages,
-    )
-    return respuesta.get("message", {}).get("content", "").strip()
+    last_error: Optional[Exception] = None
+    for _ in range(max(retries, 1)):
+        try:
+            respuesta = ollama.chat(
+                model=os.environ.get("OLLAMA_MODEL", "llama3:latest"),
+                messages=messages,
+                options={"temperature": temperature},
+            )
+            contenido = respuesta.get("message", {}).get("content", "").strip()
+            if contenido:
+                return contenido
+        except Exception as error:
+            last_error = error
+
+    if last_error is not None:
+        raise last_error
+
+    return ""
 
 
 def clasificar_pregunta(pregunta: str) -> str:
@@ -87,18 +100,42 @@ def clasificar_pregunta(pregunta: str) -> str:
         {
             "role": "system",
             "content": (
-                "Clasifica la pregunta en una sola palabra: VARIABLE o FIJA. "
+                "Clasifica la entrada en una sola palabra: VARIABLE, FIJA, SALUDO o INCOMPLETA. "
+                "SALUDO = mensajes de saludo o apertura sin pregunta concreta. "
+                "INCOMPLETA = entradas muy cortas o cortadas que no permiten responder con precisión. "
                 "VARIABLE = depende de fecha, hora, noticias, clima, precios o estado actual. "
                 "FIJA = hechos históricos, definiciones o conocimiento estable. "
-                "Responde exactamente con VARIABLE o FIJA, sin explicación."
+                "Responde exactamente con una sola palabra, sin explicación."
             ),
         },
         {"role": "user", "content": pregunta},
     ]
 
     try:
-        respuesta = _chat_with_ollama(messages)
+        respuesta = _chat_with_ollama(messages, temperature=0.0)
         respuesta = respuesta.upper().strip()
+        if "SALUDO" in respuesta:
+            return "saludo"
+        if "INCOMPLETA" in respuesta:
+            return "incompleta"
+        if "VARIABLE" in respuesta:
+            return "variable"
+        if "FIJA" in respuesta:
+            return "fija"
+        respuesta = _chat_with_ollama(
+            [
+                {
+                    "role": "system",
+                    "content": "Responde solo con una de estas palabras: VARIABLE, FIJA, SALUDO, INCOMPLETA.",
+                },
+                {"role": "user", "content": pregunta},
+            ],
+            temperature=0.0,
+        ).upper().strip()
+        if "SALUDO" in respuesta:
+            return "saludo"
+        if "INCOMPLETA" in respuesta:
+            return "incompleta"
         if "VARIABLE" in respuesta:
             return "variable"
         if "FIJA" in respuesta:
@@ -108,6 +145,41 @@ def clasificar_pregunta(pregunta: str) -> str:
 
     # Fallback conservador: si no podemos clasificar, tratamos la pregunta como fija.
     return "fija"
+
+
+def responder_saludo(pregunta: str) -> dict:
+    respuesta = _chat_with_ollama(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "El usuario solo saludó. Responde de forma breve, amable y natural. "
+                    "No des explicaciones, no hagas listas y no agregues contexto."
+                ),
+            },
+            {"role": "user", "content": pregunta},
+        ],
+        temperature=0.2,
+    )
+    return {"answer": respuesta or "Hola, ¿en qué te ayudo?", "source": "greeting"}
+
+
+def responder_incompleta(pregunta: str) -> dict:
+    respuesta = _chat_with_ollama(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "La entrada del usuario está incompleta o no es suficiente para responder. "
+                    "Pide que complete la idea en una sola frase breve y natural. "
+                    "No des ejemplos ni explicaciones."
+                ),
+            },
+            {"role": "user", "content": pregunta},
+        ],
+        temperature=0.1,
+    )
+    return {"answer": respuesta or "¿Puedes completar tu pregunta?", "source": "incomplete"}
 
 
 def responder_variable(pregunta: str) -> dict:
@@ -121,7 +193,8 @@ def responder_variable(pregunta: str) -> dict:
                 ),
             },
             {"role": "user", "content": pregunta},
-        ]
+        ],
+        temperature=0.0,
     )
 
     if "NO_SE" not in respuesta_llm.upper():
@@ -150,7 +223,8 @@ def responder_variable(pregunta: str) -> dict:
                 ),
             },
             {"role": "user", "content": prompt_final},
-        ]
+        ],
+        temperature=0.2,
     )
 
     if not respuesta_final:
@@ -178,6 +252,38 @@ def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
     if titulo_chat:
         set_chat_title(chat_id_normalizado, titulo_chat)
     tipo_pregunta = clasificar_pregunta(pregunta)
+
+    if tipo_pregunta == "saludo":
+        respuesta_saludo = responder_saludo(pregunta)
+        save_message(
+            chat_id_normalizado,
+            "assistant",
+            respuesta_saludo["answer"],
+            source=respuesta_saludo["source"],
+            question_type="saludo",
+        )
+        return {
+            "answer": respuesta_saludo["answer"],
+            "source": respuesta_saludo["source"],
+            "question_type": "saludo",
+            "chat_id": chat_id_normalizado,
+        }
+
+    if tipo_pregunta == "incompleta":
+        respuesta_incompleta = responder_incompleta(pregunta)
+        save_message(
+            chat_id_normalizado,
+            "assistant",
+            respuesta_incompleta["answer"],
+            source=respuesta_incompleta["source"],
+            question_type="incompleta",
+        )
+        return {
+            "answer": respuesta_incompleta["answer"],
+            "source": respuesta_incompleta["source"],
+            "question_type": "incompleta",
+            "chat_id": chat_id_normalizado,
+        }
 
     if tipo_pregunta == "variable":
         respuesta_variable = responder_variable(pregunta)
@@ -229,11 +335,13 @@ def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
                     ),
                 },
                 {"role": "user", "content": prompt_evaluacion},
-            ]
+            ],
+            temperature=0.0,
         )
     except Exception as e:
         logger.warning("Error calling Ollama: %s", e)
-        save_message(chat_id_normalizado, "assistant", f"Error al comunicarse con Ollama: {e}", source="error", question_type="fija")
+        save_message(chat_id_normalizado, "assistant",
+                     f"Error al comunicarse con Ollama: {e}", source="error", question_type="fija")
         return {"answer": f"Error al comunicarse con Ollama: {e}", "source": "error", "question_type": "fija", "chat_id": chat_id_normalizado}
 
     if "NO_SE" in respuesta_llm.upper():
@@ -263,17 +371,22 @@ def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
                             ),
                         },
                         {"role": "user", "content": prompt_final},
-                    ]
+                    ],
+                    temperature=0.2,
                 )
-                save_message(chat_id_normalizado, "assistant", respuesta_final or info_internet, source="internet", question_type="fija")
+                save_message(chat_id_normalizado, "assistant",
+                             respuesta_final or info_internet, source="internet", question_type="fija")
                 return {"answer": respuesta_final or info_internet, "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
             except Exception as e:
                 logger.warning("Error calling Ollama for final answer: %s", e)
-                save_message(chat_id_normalizado, "assistant", "Se obtuvo información de internet pero falló la generación final del LLM.", source="internet", question_type="fija")
+                save_message(chat_id_normalizado, "assistant",
+                             "Se obtuvo información de internet pero falló la generación final del LLM.", source="internet", question_type="fija")
                 return {"answer": "Se obtuvo información de internet pero falló la generación final del LLM.", "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
         else:
-            save_message(chat_id_normalizado, "assistant", "No se encontró información en internet.", source="internet", question_type="fija")
+            save_message(chat_id_normalizado, "assistant",
+                         "No se encontró información en internet.", source="internet", question_type="fija")
             return {"answer": "No se encontró información en internet.", "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
 
-    save_message(chat_id_normalizado, "assistant", respuesta_llm, source="local_or_model", question_type="fija")
+    save_message(chat_id_normalizado, "assistant", respuesta_llm,
+                 source="local_or_model", question_type="fija")
     return {"answer": respuesta_llm, "source": "local_or_model", "question_type": "fija", "chat_id": chat_id_normalizado}
