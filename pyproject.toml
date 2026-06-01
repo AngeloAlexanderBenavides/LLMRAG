@@ -1,0 +1,17 @@
+[project]
+name = "ia-chatbot"
+version = "0.1.0"
+description = "Chatbot FastAPI app using Ollama + ChromaDB"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "ollama",
+  "chromadb",
+  "duckduckgo_search",
+  "jinja2",
+  "uv"
+]
+
+[tool.uv]
+# uv-specific configuration can go here (optional)

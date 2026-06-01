@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+memoria_agente/
+uv.lock
+.env
+/.vscode/
+dist/
+build/

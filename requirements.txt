@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+ollama
+chromadb
+duckduckgo_search
+jinja2
+uv
