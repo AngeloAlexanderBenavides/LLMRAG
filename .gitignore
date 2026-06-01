@@ -3,6 +3,7 @@ venv/
 __pycache__/
 *.pyc
 memoria_agente/
+chat_history.db
 uv.lock
 .env
 /.vscode/

@@ -4,6 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+try:
+    from app.history_store import ensure_chat, save_memory_entry, save_message, set_chat_title, touch_chat
+except Exception:
+    from history_store import ensure_chat, save_memory_entry, save_message, set_chat_title, touch_chat
+
 logger = logging.getLogger(__name__)
 
 # Limit BLAS threads to avoid native lib issues on some systems
@@ -167,10 +172,22 @@ def check_ollama_available() -> (bool, Optional[str]):
 
 def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
     chat_id_normalizado = _normalize_chat_id(chat_id)
+    ensure_chat(chat_id_normalizado)
+    save_message(chat_id_normalizado, "user", pregunta)
+    titulo_chat = pregunta.strip().replace("\n", " ")[:60]
+    if titulo_chat:
+        set_chat_title(chat_id_normalizado, titulo_chat)
     tipo_pregunta = clasificar_pregunta(pregunta)
 
     if tipo_pregunta == "variable":
         respuesta_variable = responder_variable(pregunta)
+        save_message(
+            chat_id_normalizado,
+            "assistant",
+            respuesta_variable["answer"],
+            source=respuesta_variable["source"],
+            question_type="variable",
+        )
         return {
             "answer": respuesta_variable["answer"],
             "source": respuesta_variable["source"],
@@ -216,6 +233,7 @@ def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
         )
     except Exception as e:
         logger.warning("Error calling Ollama: %s", e)
+        save_message(chat_id_normalizado, "assistant", f"Error al comunicarse con Ollama: {e}", source="error", question_type="fija")
         return {"answer": f"Error al comunicarse con Ollama: {e}", "source": "error", "question_type": "fija", "chat_id": chat_id_normalizado}
 
     if "NO_SE" in respuesta_llm.upper():
@@ -231,6 +249,7 @@ def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
                     )
                 except Exception as e:
                     logger.warning("Failed to save info to ChromaDB: %s", e)
+            save_memory_entry(chat_id_normalizado, pregunta, info_internet, "internet")
 
             prompt_final = f"Responde a la pregunta '{pregunta}' basándote en esta nueva información de internet: {info_internet}"
             try:
@@ -246,11 +265,15 @@ def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
                         {"role": "user", "content": prompt_final},
                     ]
                 )
+                save_message(chat_id_normalizado, "assistant", respuesta_final or info_internet, source="internet", question_type="fija")
                 return {"answer": respuesta_final or info_internet, "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
             except Exception as e:
                 logger.warning("Error calling Ollama for final answer: %s", e)
+                save_message(chat_id_normalizado, "assistant", "Se obtuvo información de internet pero falló la generación final del LLM.", source="internet", question_type="fija")
                 return {"answer": "Se obtuvo información de internet pero falló la generación final del LLM.", "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
         else:
+            save_message(chat_id_normalizado, "assistant", "No se encontró información en internet.", source="internet", question_type="fija")
             return {"answer": "No se encontró información en internet.", "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
 
+    save_message(chat_id_normalizado, "assistant", respuesta_llm, source="local_or_model", question_type="fija")
     return {"answer": respuesta_llm, "source": "local_or_model", "question_type": "fija", "chat_id": chat_id_normalizado}

@@ -40,7 +40,11 @@
     </div>
 
     <div class="px-3 py-2 flex flex-col gap-1 shrink-0">
-      <button class="sidebar-btn sidebar-btn-primary" type="button" data-action="new-chat">
+      <button
+        class="sidebar-btn sidebar-btn-primary"
+        type="button"
+        data-action="new-chat"
+      >
         <span class="material-symbols-outlined text-[18px]">edit_note</span>
         Nuevo chat
       </button>
@@ -61,56 +65,7 @@
 
       <div>
         <p class="section-label mb-2">Recientes</p>
-        <div class="space-y-[2px]">
-          <div class="history-item history-item-pinned">
-            <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon"
-                >chat_bubble</span
-              >
-              <span class="history-text">Infoproducto con Chat GPT: Ideas</span>
-            </div>
-            <span class="material-symbols-outlined history-pin">keep</span>
-          </div>
-
-          <div class="history-item history-item-pinned">
-            <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon"
-                >chat_bubble</span
-              >
-              <span class="history-text">WhatsApp API: Meta vs. Evolution</span>
-            </div>
-            <span class="material-symbols-outlined history-pin">keep</span>
-          </div>
-
-          <div class="history-item">
-            <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon"
-                >chat_bubble</span
-              >
-              <span class="history-text">Instalar Pip en Orange Pi</span>
-            </div>
-          </div>
-
-          <div class="history-item">
-            <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon"
-                >chat_bubble</span
-              >
-              <span class="history-text">Instalar Ollama en Orange Pi</span>
-            </div>
-          </div>
-
-          <div class="history-item">
-            <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon"
-                >chat_bubble</span
-              >
-              <span class="history-text"
-                >Python, Finanzas y E-commerce: Tu Ca...</span
-              >
-            </div>
-          </div>
-        </div>
+        <div id="chats-list" class="space-y-[2px]"></div>
       </div>
     </div>
 
@@ -153,6 +108,7 @@
     >
       <div class="hero-copy text-center select-none">
         <h2 class="hero-title">¿Con qué seguimos, {{ user_name }}?</h2>
+        <p id="current-chat-label" class="hero-subtitle">Chat actual</p>
         <p class="hero-subtitle">
           Pregunta lo que quieras. Si no sabe, buscará en internet y aprenderá
           para la próxima.
@@ -214,8 +170,8 @@
 
   <footer class="h-10 flex items-center justify-center px-4">
     <p class="footer-note">
-      Gemini puede mostrar información inexacta, incluso sobre personas, por lo
-      que debes verificar sus respuestas.
+      Puede mostrar información inexacta, incluso sobre personas, por lo que
+      debes verificar sus respuestas.
     </p>
   </footer>
 </main>

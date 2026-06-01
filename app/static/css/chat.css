@@ -99,6 +99,10 @@ body {
 
 .history-item {
   width: 100%;
+  display: block;
+  text-align: left;
+  appearance: none;
+  border: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -114,6 +118,11 @@ body {
   background: var(--gemini-hover-bg);
 }
 
+.history-item-active {
+  background: rgba(26, 115, 232, 0.18);
+  border: 1px solid rgba(26, 115, 232, 0.25);
+}
+
 .history-item-main {
   min-width: 0;
   display: flex;
@@ -127,6 +136,19 @@ body {
   font-size: 16px;
   color: var(--gemini-text-muted);
   flex-shrink: 0;
+}
+
+.history-meta {
+  font-size: 10px;
+  color: var(--gemini-text-muted);
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+}
+
+.history-empty {
+  padding: 0.75rem 1rem;
+  color: var(--gemini-text-muted);
+  font-size: 0.8rem;
 }
 
 .history-text {
@@ -194,6 +216,11 @@ body {
   max-width: 42rem;
   margin: 0 auto;
   font-size: 0.95rem;
+}
+
+#current-chat-label {
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
 }
 
 .chat-shell {

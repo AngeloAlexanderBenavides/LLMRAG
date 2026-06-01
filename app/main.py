@@ -6,6 +6,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+try:
+    from app.history_store import get_chat_messages, list_chats
+except Exception:
+    from history_store import get_chat_messages, list_chats
+
 app = FastAPI()
 
 base_dir = os.path.dirname(__file__)
@@ -42,6 +47,16 @@ async def chat_endpoint(request: Request):
 
     resultado = consultar_agente(pregunta, chat_id=chat_id)
     return JSONResponse(resultado)
+
+
+@app.get("/api/chats")
+def chats_list():
+    return JSONResponse({"chats": list_chats()})
+
+
+@app.get("/api/chats/{chat_id}")
+def chat_history(chat_id: str):
+    return JSONResponse({"chat_id": chat_id, "messages": get_chat_messages(chat_id)})
 
 
 @app.get("/api/ollama_check")
