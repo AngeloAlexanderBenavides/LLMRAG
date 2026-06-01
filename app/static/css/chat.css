@@ -412,3 +412,32 @@ body {
     display: none;
   }
 }
+
+/* Efecto de cursor parpadeante en tiempo de streaming */
+.streaming-text::after {
+  content: "▊";
+  display: inline-block;
+  color: var(--gemini-blue);
+  margin-left: 2px;
+  animation: blink 0.8s infinite steps(1);
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Spinner premium para estados */
+.status-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(26, 115, 232, 0.2);
+  border-top-color: var(--gemini-blue);
+  border-radius: 999px;
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

@@ -153,27 +153,104 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const loading = document.createElement('div');
     loading.className = 'message message-bot';
-    loading.innerHTML = '<div class="message-badge">AI</div><div class="message-body">Pensando...</div>';
+    loading.innerHTML = `
+      <div class="message-badge">AI</div>
+      <div class="message-body" style="display: flex; align-items: center; gap: 0.5rem;">
+        <span class="status-spinner"></span>
+        <span class="status-text">Clasificando pregunta...</span>
+      </div>
+    `;
     log.appendChild(loading);
     scrollToBottom();
 
     try {
-      const response = await fetch(window.APP_CONFIG.apiUrl, {
+      const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, chat_id: chatId })
       });
 
-      const data = await response.json();
-      loading.remove();
-
       if (!response.ok) {
-        addMessage(data.error || 'Ocurrió un error al responder.', 'bot');
+        loading.remove();
+        let errorMsg = 'Ocurrió un error al responder.';
+        try {
+          const data = await response.json();
+          errorMsg = data.error || errorMsg;
+        } catch (_) {}
+        addMessage(errorMsg, 'bot');
         return;
       }
 
-      addMessage(data.answer || 'No hubo respuesta.', 'bot');
-      await refreshChatsList();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+
+      let botMessageElement = null;
+      let botBodyElement = null;
+      let accumulatedAnswer = '';
+      let isFirstToken = true;
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          if (line.startsWith('data: ')) {
+            const dataStr = line.slice(6);
+            try {
+              const event = JSON.parse(dataStr);
+
+              if (event.type === 'status') {
+                const statusText = loading.querySelector('.status-text');
+                if (statusText) {
+                  statusText.textContent = event.content;
+                }
+              }
+              else if (event.type === 'token') {
+                if (isFirstToken) {
+                  isFirstToken = false;
+                  loading.remove();
+
+                  botMessageElement = document.createElement('div');
+                  botMessageElement.className = 'message message-bot';
+
+                  const badge = document.createElement('div');
+                  badge.className = 'message-badge';
+                  badge.textContent = 'AI';
+                  botMessageElement.appendChild(badge);
+
+                  botBodyElement = document.createElement('div');
+                  botBodyElement.className = 'message-body streaming-text';
+                  botMessageElement.appendChild(botBodyElement);
+
+                  log.appendChild(botMessageElement);
+                }
+
+                accumulatedAnswer += event.content;
+                botBodyElement.textContent = accumulatedAnswer;
+                scrollToBottom();
+              }
+              else if (event.type === 'done') {
+                if (botBodyElement) {
+                  botBodyElement.classList.remove('streaming-text');
+                }
+                await refreshChatsList();
+              }
+              else if (event.type === 'error') {
+                loading.remove();
+                addMessage(event.content || 'Error en la transmisión.', 'bot');
+              }
+            } catch (err) {
+              console.error('Error al parsear evento SSE:', err, line);
+            }
+          }
+        }
+      }
     } catch (error) {
       loading.remove();
       addMessage('No se pudo conectar con el servidor.', 'bot');

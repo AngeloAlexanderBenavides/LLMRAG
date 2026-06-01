@@ -1,8 +1,8 @@
 import os
 
-from agent import check_ollama_available, consultar_agente
+from agent import check_ollama_available, consultar_agente, consultar_agente_stream
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -47,6 +47,27 @@ async def chat_endpoint(request: Request):
 
     resultado = consultar_agente(pregunta, chat_id=chat_id)
     return JSONResponse(resultado)
+
+
+import json
+
+@app.post("/api/chat/stream")
+async def chat_stream_endpoint(request: Request):
+    data = await request.json()
+    pregunta = data.get("message", "")
+    chat_id = data.get("chat_id")
+    if not pregunta:
+        return JSONResponse({"error": "empty message"}, status_code=400)
+
+    def event_generator():
+        try:
+            for event in consultar_agente_stream(pregunta, chat_id=chat_id):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            err_event = {"type": "error", "content": str(e)}
+            yield f"data: {json.dumps(err_event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/api/chats")
