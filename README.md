@@ -11,8 +11,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Visit http://<orangepi-ip>:8000 in your browser.
 
-Ollama setup
--------------
+## Ollama setup
 
 Before using the app, make sure Ollama is running and the model exists locally.
 
@@ -28,8 +27,7 @@ $env:OLLAMA_MODEL = "llama3.1:latest"
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Quick local test
-----------------
+## Quick local test
 
 ```powershell
 uv run python -c "from app.agent import consultar_agente; print(consultar_agente('¿Cuál fue el ganador de la Copa Mundial 2022?'))"
@@ -37,8 +35,7 @@ uv run python -c "from app.agent import consultar_agente; print(consultar_agente
 
 If Ollama is not available, the app will now return a clear error instead of failing silently.
 
-Dependency management with `uv`
---------------------------------
+## Dependency management with `uv`
 
 This project includes the `uv` package to help manage dependency versions and lockfiles.
 
@@ -57,8 +54,7 @@ uv sync
 
 If you prefer `pip` only, `requirements.txt` is available and works with `pip install -r requirements.txt`.
 
-Windows-specific steps (this repo is being developed on Windows)
--------------------------------------------------------------
+## Windows-specific steps (this repo is being developed on Windows)
 
 1. Install Python dependencies and run the server (PowerShell):
 
@@ -84,8 +80,7 @@ uv run curl --silent http://localhost:8000/api/ollama_check | ConvertFrom-Json
 
 If the check reports `ok: false` the returned message will help diagnose.
 
-Upload to GitHub
-----------------
+## Upload to GitHub
 
 To push this project to GitHub:
 

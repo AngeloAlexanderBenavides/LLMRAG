@@ -1,21 +1,38 @@
-{% extends "base.html" %}
-
-{% block body %}
-<aside class="sidebar w-[280px] shrink-0 h-full select-none border-r border-white/5">
+{% extends "base.html" %} {% block body %}
+<aside
+  class="sidebar w-[280px] shrink-0 h-full select-none border-r border-white/5"
+>
   <div class="flex flex-col h-full">
     <div class="h-14 px-4 flex items-center justify-between shrink-0">
       <div class="flex items-center gap-2">
-        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 2C12 2 12.5 7.5 18 12C12.5 16.5 12 22 12 22C12 22 11.5 16.5 6 12C11.5 7.5 12 2 12 2Z" fill="url(#gemini-sparkle-grad)"/>
+        <svg
+          class="w-5 h-5"
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M12 2C12 2 12.5 7.5 18 12C12.5 16.5 12 22 12 22C12 22 11.5 16.5 6 12C11.5 7.5 12 2 12 2Z"
+            fill="url(#gemini-sparkle-grad)"
+          />
           <defs>
-            <linearGradient id="gemini-sparkle-grad" x1="6" y1="2" x2="18" y2="22" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#4285F4"/>
-              <stop offset="50%" stop-color="#9B51E0"/>
-              <stop offset="100%" stop-color="#EA4335"/>
+            <linearGradient
+              id="gemini-sparkle-grad"
+              x1="6"
+              y1="2"
+              x2="18"
+              y2="22"
+              gradientUnits="userSpaceOnUse"
+            >
+              <stop offset="0%" stop-color="#4285F4" />
+              <stop offset="50%" stop-color="#9B51E0" />
+              <stop offset="100%" stop-color="#EA4335" />
             </linearGradient>
           </defs>
         </svg>
-        <span class="text-[17px] font-medium tracking-wide text-white">{{ app_name }}</span>
+        <span class="text-[17px] font-medium tracking-wide text-white"
+          >{{ app_name }}</span
+        >
       </div>
       <button class="icon-btn" type="button" aria-label="Menu">
         <span class="material-symbols-outlined text-[20px]">menu</span>
@@ -23,7 +40,7 @@
     </div>
 
     <div class="px-3 py-2 flex flex-col gap-1 shrink-0">
-      <button class="sidebar-btn sidebar-btn-primary" type="button">
+      <button class="sidebar-btn sidebar-btn-primary" type="button" data-action="new-chat">
         <span class="material-symbols-outlined text-[18px]">edit_note</span>
         Nuevo chat
       </button>
@@ -47,7 +64,9 @@
         <div class="space-y-[2px]">
           <div class="history-item history-item-pinned">
             <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon">chat_bubble</span>
+              <span class="material-symbols-outlined history-icon"
+                >chat_bubble</span
+              >
               <span class="history-text">Infoproducto con Chat GPT: Ideas</span>
             </div>
             <span class="material-symbols-outlined history-pin">keep</span>
@@ -55,7 +74,9 @@
 
           <div class="history-item history-item-pinned">
             <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon">chat_bubble</span>
+              <span class="material-symbols-outlined history-icon"
+                >chat_bubble</span
+              >
               <span class="history-text">WhatsApp API: Meta vs. Evolution</span>
             </div>
             <span class="material-symbols-outlined history-pin">keep</span>
@@ -63,22 +84,30 @@
 
           <div class="history-item">
             <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon">chat_bubble</span>
+              <span class="material-symbols-outlined history-icon"
+                >chat_bubble</span
+              >
               <span class="history-text">Instalar Pip en Orange Pi</span>
             </div>
           </div>
 
           <div class="history-item">
             <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon">chat_bubble</span>
+              <span class="material-symbols-outlined history-icon"
+                >chat_bubble</span
+              >
               <span class="history-text">Instalar Ollama en Orange Pi</span>
             </div>
           </div>
 
           <div class="history-item">
             <div class="history-item-main">
-              <span class="material-symbols-outlined history-icon">chat_bubble</span>
-              <span class="history-text">Python, Finanzas y E-commerce: Tu Ca...</span>
+              <span class="material-symbols-outlined history-icon"
+                >chat_bubble</span
+              >
+              <span class="history-text"
+                >Python, Finanzas y E-commerce: Tu Ca...</span
+              >
             </div>
           </div>
         </div>
@@ -90,7 +119,9 @@
         <div class="flex items-center gap-2.5 min-w-0">
           <div class="avatar">L</div>
           <div class="min-w-0">
-            <p class="text-xs font-semibold text-gemini-textActive truncate">{{ user_name }}</p>
+            <p class="text-xs font-semibold text-gemini-textActive truncate">
+              {{ user_name }}
+            </p>
             <p class="text-[10px] text-gemini-textMuted">{{ user_role }}</p>
           </div>
         </div>
@@ -102,7 +133,9 @@
   </div>
 </aside>
 
-<main class="main-area flex-1 h-full flex flex-col justify-between relative gemini-gradient-bg overflow-hidden">
+<main
+  class="main-area flex-1 h-full flex flex-col justify-between relative gemini-gradient-bg overflow-hidden"
+>
   <header class="h-14 px-6 flex items-center justify-end">
     <div class="flex items-center gap-2">
       <button class="icon-btn" type="button" aria-label="History">
@@ -112,18 +145,30 @@
     </div>
   </header>
 
-  <section class="chat-shell flex-1 flex flex-col px-4 max-w-3xl mx-auto w-full pb-6">
-    <div class="hero-space flex-1 flex flex-col justify-center items-center min-h-0">
+  <section
+    class="chat-shell flex-1 flex flex-col px-4 max-w-3xl mx-auto w-full pb-6"
+  >
+    <div
+      class="hero-space flex-1 flex flex-col justify-center items-center min-h-0"
+    >
       <div class="hero-copy text-center select-none">
         <h2 class="hero-title">¿Con qué seguimos, {{ user_name }}?</h2>
-        <p class="hero-subtitle">Pregunta lo que quieras. Si no sabe, buscará en internet y aprenderá para la próxima.</p>
+        <p class="hero-subtitle">
+          Pregunta lo que quieras. Si no sabe, buscará en internet y aprenderá
+          para la próxima.
+        </p>
       </div>
 
-      <div id="chat-log" class="chat-log custom-scroll" aria-live="polite" aria-label="Conversación">
+      <div
+        id="chat-log"
+        class="chat-log custom-scroll"
+        aria-live="polite"
+        aria-label="Conversación"
+      >
         <div class="message message-bot">
           <div class="message-badge">AI</div>
           <div class="message-body">
-            <p>Hola, ya puedes preguntarme algo. Por ejemplo: ¿Cuál fue el ganador de la Copa Mundial 2022?</p>
+            <p>Hola, ya puedes preguntarme algo.</p>
           </div>
         </div>
       </div>
@@ -132,7 +177,7 @@
         <label class="sr-only" for="chat-input">Escribe tu pregunta</label>
         <div class="composer-inner">
           <label class="composer-action" title="Subir o añadir">
-            <input type="file" class="hidden" id="chat-file">
+            <input type="file" class="hidden" id="chat-file" />
             <span class="material-symbols-outlined text-[22px]">add</span>
           </label>
 
@@ -144,9 +189,15 @@
             class="composer-input"
           />
 
-          <button type="button" class="model-pill" aria-label="Seleccionar modelo">
+          <button
+            type="button"
+            class="model-pill"
+            aria-label="Seleccionar modelo"
+          >
             <span>Pro</span>
-            <span class="material-symbols-outlined text-[14px]">keyboard_arrow_down</span>
+            <span class="material-symbols-outlined text-[14px]"
+              >keyboard_arrow_down</span
+            >
           </button>
 
           <button type="button" class="icon-btn" aria-label="Usar micrófono">
@@ -162,7 +213,10 @@
   </section>
 
   <footer class="h-10 flex items-center justify-center px-4">
-    <p class="footer-note">Gemini puede mostrar información inexacta, incluso sobre personas, por lo que debes verificar sus respuestas.</p>
+    <p class="footer-note">
+      Gemini puede mostrar información inexacta, incluso sobre personas, por lo
+      que debes verificar sus respuestas.
+    </p>
   </footer>
 </main>
 {% endblock %}

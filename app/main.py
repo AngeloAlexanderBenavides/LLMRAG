@@ -36,10 +36,11 @@ def index(request: Request):
 async def chat_endpoint(request: Request):
     data = await request.json()
     pregunta = data.get("message", "")
+    chat_id = data.get("chat_id")
     if not pregunta:
         return JSONResponse({"error": "empty message"}, status_code=400)
 
-    resultado = consultar_agente(pregunta)
+    resultado = consultar_agente(pregunta, chat_id=chat_id)
     return JSONResponse(resultado)
 
 
