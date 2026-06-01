@@ -1,11 +1,10 @@
 import os
 
+from agent import check_ollama_available, consultar_agente
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-
-from app.agent import check_ollama_available, consultar_agente
 
 app = FastAPI()
 
@@ -17,9 +16,9 @@ app.mount("/static", StaticFiles(directory=os.path.join(base_dir, "static")), na
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
+        request=request,
+        name="index.html",
+        context={
             "user_name": "Prueba",
             "user_role": "Example",
             "app_name": "IA_Bot",
