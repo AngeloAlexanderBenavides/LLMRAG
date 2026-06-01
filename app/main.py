@@ -15,15 +15,21 @@ app.mount("/static", StaticFiles(directory=os.path.join(base_dir, "static")), na
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "user_name": "Prueba",
-            "user_role": "Example",
-            "app_name": "IA_Bot",
-        },
-    )
+    context = {
+        "request": request,
+        "user_name": "Prueba",
+        "user_role": "Example",
+        "app_name": "IA_Bot",
+    }
+
+    try:
+        return templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context=context,
+        )
+    except TypeError:
+        return templates.TemplateResponse("index.html", context)
 
 
 @app.post("/api/chat")
