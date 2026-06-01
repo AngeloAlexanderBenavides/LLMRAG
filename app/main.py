@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.agent import consultar_agente, check_ollama_available
+from app.agent import check_ollama_available, consultar_agente
 
 app = FastAPI()
 
@@ -20,9 +20,9 @@ def index(request: Request):
         "index.html",
         {
             "request": request,
-            "user_name": "LexBen",
-            "user_role": "Pro",
-            "app_name": "Gemini",
+            "user_name": "Prueba",
+            "user_role": "Example",
+            "app_name": "IA_Bot",
         },
     )
 
