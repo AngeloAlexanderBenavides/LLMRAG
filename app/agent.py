@@ -106,7 +106,32 @@ def _chat_with_ollama(
     return ""
 
 
-def clasificar_pregunta(pregunta: str) -> str:
+def _get_conversational_history(chat_id: Optional[str], limit: int = 10) -> list[dict]:
+    if not chat_id:
+        return []
+    try:
+        from app.history_store import get_chat_messages
+    except Exception:
+        from history_store import get_chat_messages
+        
+    try:
+        all_messages = get_chat_messages(chat_id)
+        filtered = []
+        for msg in all_messages:
+            role = msg.get("role")
+            content = msg.get("content")
+            if role in ("user", "assistant") and content:
+                # Filtrar posibles errores de la base de datos para no contaminar el contexto
+                if msg.get("source") == "error":
+                    continue
+                filtered.append({"role": role, "content": content})
+        return filtered[-limit:]
+    except Exception as e:
+        logger.warning("Error loading conversational history: %s", e)
+        return []
+
+
+def clasificar_pregunta(pregunta: str, chat_id: Optional[str] = None) -> str:
     # Todo es clasificado mediante el LLM (Inteligencia Artificial) de Ollama, sin filtros de código (sin cosas quemadas).
     prompt_sistema = (
         "Tu única tarea es clasificar la entrada del usuario en una sola palabra en mayúsculas, eligiendo estrictamente de esta lista:\n"
@@ -134,10 +159,8 @@ def clasificar_pregunta(pregunta: str) -> str:
         "- NO incluyas introducciones, explicaciones, justificaciones ni signos de puntuación."
     )
 
-    messages = [
-        {"role": "system", "content": prompt_sistema},
-        {"role": "user", "content": pregunta},
-    ]
+    history = _get_conversational_history(chat_id, limit=6)
+    messages = [{"role": "system", "content": prompt_sistema}] + history + [{"role": "user", "content": pregunta}]
 
     try:
         respuesta = _chat_with_ollama(messages, temperature=0.0)
@@ -152,16 +175,14 @@ def clasificar_pregunta(pregunta: str) -> str:
             return "fija"
         
         # Reintento con un prompt aún más directo si el modelo falló el formato en el primer intento
-        respuesta_reintento = _chat_with_ollama(
-            [
-                {
-                    "role": "system",
-                    "content": "Responde únicamente con una de estas cuatro palabras en mayúsculas: SALUDO, INCOMPLETA, VARIABLE, FIJA.",
-                },
-                {"role": "user", "content": pregunta},
-            ],
-            temperature=0.0,
-        ).upper().strip()
+        messages_reintento = [
+            {
+                "role": "system",
+                "content": "Responde únicamente con una de estas cuatro palabras en mayúsculas: SALUDO, INCOMPLETA, VARIABLE, FIJA.",
+            }
+        ] + history + [{"role": "user", "content": pregunta}]
+        
+        respuesta_reintento = _chat_with_ollama(messages_reintento, temperature=0.0).upper().strip()
         if "SALUDO" in respuesta_reintento:
             return "saludo"
         if "INCOMPLETA" in respuesta_reintento:
@@ -440,6 +461,12 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
     print(f"[LOG DE AGENTE] ID de chat: '{chat_id_normalizado}'")
     
     ensure_chat(chat_id_normalizado)
+    
+    # 1. Obtener historial conversacional PREVIO (antes de guardar la pregunta actual)
+    history = _get_conversational_history(chat_id_normalizado, limit=8)
+    print(f"[LOG DE AGENTE] Historial conversacional cargado ({len(history)} mensajes previos).")
+    
+    # 2. Guardar la pregunta actual en la base de datos
     save_message(chat_id_normalizado, "user", pregunta)
     
     titulo_chat = pregunta.strip().replace("\n", " ")[:60]
@@ -448,8 +475,8 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
 
     yield {"type": "status", "content": "Clasificando pregunta..."}
     
-    print(f"[LOG DE AGENTE] Ejecutando clasificación por IA...")
-    tipo_pregunta = clasificar_pregunta(pregunta)
+    print(f"[LOG DE AGENTE] Ejecutando clasificación por IA con contexto...")
+    tipo_pregunta = clasificar_pregunta(pregunta, chat_id=chat_id_normalizado)
     print(f"[LOG DE AGENTE] Clasificación obtenida: {tipo_pregunta.upper()}")
 
     if tipo_pregunta == "saludo":
@@ -462,10 +489,9 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     "No des explicaciones, no hagas listas y no agregues contexto."
                 ),
             },
-            {"role": "user", "content": pregunta},
-        ]
+        ] + history + [{"role": "user", "content": pregunta}]
         
-        print(f"[LOG DE AGENTE] [SALUDO] Enviando prompt a Ollama...")
+        print(f"[LOG DE AGENTE] [SALUDO] Enviando prompt a Ollama con contexto...")
         try:
             response_gen = _chat_with_ollama(messages, temperature=0.2, stream=True)
             full_text = ""
@@ -500,10 +526,9 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     "No des ejemplos ni explicaciones."
                 ),
             },
-            {"role": "user", "content": pregunta},
-        ]
+        ] + history + [{"role": "user", "content": pregunta}]
         
-        print(f"[LOG DE AGENTE] [INCOMPLETA] Enviando prompt a Ollama...")
+        print(f"[LOG DE AGENTE] [INCOMPLETA] Enviando prompt a Ollama con contexto...")
         try:
             response_gen = _chat_with_ollama(messages, temperature=0.1, stream=True)
             full_text = ""
@@ -537,10 +562,9 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     "Máximo una frase corta. Si no conoces la respuesta exacta y actual, responde exactamente: NO_SE"
                 ),
             },
-            {"role": "user", "content": pregunta},
-        ]
+        ] + history + [{"role": "user", "content": pregunta}]
         
-        print(f"[LOG DE AGENTE] [VARIABLE] Evaluando si el modelo conoce la respuesta de inmediato...")
+        print(f"[LOG DE AGENTE] [VARIABLE] Evaluando si el modelo conoce la respuesta de inmediato con contexto...")
         respuesta_llm = ""
         try:
             respuesta_llm = _chat_with_ollama(messages, temperature=0.0)
@@ -558,7 +582,7 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
             return
 
-        print(f"[LOG DE AGENTE] [VARIABLE] El LLM respondió NO_SE. Iniciando búsqueda web...")
+        print(f"[LOG DE AGENTE] [VARIABLE] El LLM respondió NO_SE o requiere datos. Iniciando búsqueda web...")
         yield {"type": "status", "content": "Buscando en Internet..."}
         
         print(f"[LOG DE AGENTE] [VARIABLE] Ejecutando búsqueda en DuckDuckGo para: '{pregunta}'")
@@ -600,10 +624,9 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     "No expliques el proceso, no menciones el contexto y no agregues información extra."
                 ),
             },
-            {"role": "user", "content": prompt_final},
-        ]
+        ] + history + [{"role": "user", "content": prompt_final}]
         
-        print(f"[LOG DE AGENTE] [VARIABLE] Enviando información de Internet al LLM para redacción final...")
+        print(f"[LOG DE AGENTE] [VARIABLE] Enviando información de Internet al LLM para redacción final con contexto...")
         try:
             response_gen = _chat_with_ollama(final_messages, temperature=0.2, stream=True)
             full_text = ""
@@ -665,8 +688,7 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                 "No des explicaciones, no agregues contexto extra, no hagas listas y sé breve."
             ),
         },
-        {"role": "user", "content": prompt_evaluacion},
-    ]
+    ] + history + [{"role": "user", "content": prompt_evaluacion}]
 
     print(f"[LOG DE AGENTE] [FIJA] Enviando pregunta de evaluación al LLM...")
     respuesta_llm = ""
@@ -716,10 +738,9 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     "No expliques el proceso, no menciones el contexto y no agregues información extra."
                 ),
             },
-            {"role": "user", "content": prompt_final},
-        ]
+        ] + history + [{"role": "user", "content": prompt_final}]
         
-        print(f"[LOG DE AGENTE] [FIJA] Enviando información de Internet al LLM para redacción final...")
+        print(f"[LOG DE AGENTE] [FIJA] Enviando información de Internet al LLM para redacción final con contexto...")
         try:
             response_gen = _chat_with_ollama(final_messages, temperature=0.2, stream=True)
             full_text = ""

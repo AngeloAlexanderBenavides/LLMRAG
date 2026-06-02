@@ -43,6 +43,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  const setComposerDisabled = (disabled) => {
+    input.disabled = disabled;
+    const submitBtn = form.querySelector('.send-btn');
+    if (submitBtn) {
+      submitBtn.disabled = disabled;
+      if (disabled) {
+        submitBtn.style.opacity = '0.5';
+        submitBtn.style.cursor = 'not-allowed';
+      } else {
+        submitBtn.style.opacity = '1';
+        submitBtn.style.cursor = 'pointer';
+      }
+    }
+  };
+
   const renderMessage = (text, role) => {
     const message = document.createElement('div');
     message.className = `message message-${role}`;
@@ -147,9 +162,9 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    setComposerDisabled(true); // Deshabilitamos entrada para evitar doble envío
     addMessage(message, 'user');
     input.value = '';
-    input.focus();
 
     const loading = document.createElement('div');
     loading.className = 'message message-bot';
@@ -178,6 +193,8 @@ document.addEventListener('DOMContentLoaded', () => {
           errorMsg = data.error || errorMsg;
         } catch (_) {}
         addMessage(errorMsg, 'bot');
+        setComposerDisabled(false);
+        input.focus();
         return;
       }
 
@@ -240,10 +257,14 @@ document.addEventListener('DOMContentLoaded', () => {
                   botBodyElement.classList.remove('streaming-text');
                 }
                 await refreshChatsList();
+                setComposerDisabled(false);
+                input.focus();
               }
               else if (event.type === 'error') {
                 loading.remove();
                 addMessage(event.content || 'Error en la transmisión.', 'bot');
+                setComposerDisabled(false);
+                input.focus();
               }
             } catch (err) {
               console.error('Error al parsear evento SSE:', err, line);
@@ -254,6 +275,8 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
       loading.remove();
       addMessage('No se pudo conectar con el servidor.', 'bot');
+      setComposerDisabled(false);
+      input.focus();
     }
   });
 
