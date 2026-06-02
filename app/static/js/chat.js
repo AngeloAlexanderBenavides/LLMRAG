@@ -146,8 +146,42 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="material-symbols-outlined history-icon">chat_bubble</span>
             <span class="history-text">${chat.title}</span>
           </div>
+          <div class="history-item-actions">
+            <button class="chat-rename-btn" type="button" title="Renombrar chat">
+              <span class="material-symbols-outlined text-[15px]">edit</span>
+            </button>
+          </div>
           <span class="history-meta">${new Date(chat.updated_at).toLocaleDateString()}</span>
         `;
+        
+        const renameBtn = item.querySelector('.chat-rename-btn');
+        if (renameBtn) {
+          renameBtn.addEventListener('click', async (e) => {
+            e.stopPropagation(); // Evitar abrir el chat al hacer clic en renombrar
+            const newTitle = prompt("Introduce el nuevo nombre del chat:", chat.title);
+            if (newTitle && newTitle.trim()) {
+              try {
+                const res = await fetch(`/api/chats/${chat.chat_id}/rename`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ title: newTitle.trim() })
+                });
+                if (res.ok) {
+                  if (chat.chat_id === chatId) {
+                    setCurrentChatLabel(newTitle.trim());
+                  }
+                  await refreshChatsList();
+                } else {
+                  alert("No se pudo renombrar el chat.");
+                }
+              } catch (err) {
+                console.error(err);
+                alert("Error de conexión al renombrar.");
+              }
+            }
+          });
+        }
+
         item.addEventListener('click', () => {
           loadChatHistory(chat.chat_id, chat.title);
         });
@@ -299,6 +333,30 @@ document.addEventListener('DOMContentLoaded', () => {
       input.focus();
       refreshChatsList();
     });
+  }
+
+  // Lógica para contraer/expandir el panel lateral
+  const sidebar = document.getElementById('chat-sidebar');
+  const toggleSidebarBtn = document.getElementById('toggle-sidebar-btn');
+  const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
+
+  const toggleSidebar = () => {
+    if (sidebar) {
+      if (window.innerWidth <= 1024) {
+        sidebar.classList.toggle('sidebar-open');
+        sidebar.classList.remove('sidebar-collapsed');
+      } else {
+        sidebar.classList.toggle('sidebar-collapsed');
+        sidebar.classList.remove('sidebar-open');
+      }
+    }
+  };
+
+  if (toggleSidebarBtn) {
+    toggleSidebarBtn.addEventListener('click', toggleSidebar);
+  }
+  if (sidebarCloseBtn) {
+    sidebarCloseBtn.addEventListener('click', toggleSidebar);
   }
 
   loadChatHistory(chatId, 'Chat actual');

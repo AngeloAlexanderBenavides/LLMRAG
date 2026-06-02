@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 ollama
 chromadb
-duckduckgo_search
+ddgs
 jinja2
 uv
+

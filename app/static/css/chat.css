@@ -21,6 +21,16 @@ body {
 
 .sidebar {
   background: var(--gemini-sidebar-bg);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease;
+}
+
+.sidebar-collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  opacity: 0 !important;
+  border-right-width: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none;
 }
 
 .main-area {
@@ -386,7 +396,20 @@ body {
 
 @media (max-width: 1024px) {
   .sidebar {
-    display: none;
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px !important;
+    min-width: 280px !important;
+    z-index: 50;
+    transform: translateX(-100%);
+    opacity: 1 !important;
+    display: flex !important;
+  }
+
+  .sidebar.sidebar-open {
+    transform: translateX(0) !important;
   }
 
   .chat-shell {
@@ -490,5 +513,34 @@ body {
   padding: 0;
   color: inherit;
   font-size: 0.9em;
+}
+
+/* Estilos para renombrar chats */
+.history-item-actions {
+  display: none;
+  flex-shrink: 0;
+}
+.history-item:hover .history-item-actions {
+  display: flex;
+  align-items: center;
+}
+.history-item:hover .history-meta {
+  display: none !important;
+}
+.chat-rename-btn {
+  background: transparent;
+  border: none;
+  color: var(--gemini-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 999px;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+.chat-rename-btn:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.15);
 }
 

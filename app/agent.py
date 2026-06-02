@@ -1,8 +1,12 @@
 import logging
 import os
 import uuid
+import warnings
 from datetime import datetime
 from typing import Optional
+
+# Suppress all RuntimeWarnings in this module
+warnings.simplefilter("ignore", category=RuntimeWarning)
 
 try:
     from app.history_store import ensure_chat, save_memory_entry, save_message, set_chat_title, touch_chat
@@ -35,9 +39,13 @@ except Exception as e:
     logger.debug("ollama not available: %s", e)
 
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 except Exception:
-    DDGS = None
+    try:
+        from duckduckgo_search import DDGS
+    except Exception:
+        DDGS = None
+
 
 
 def _get_collection():
@@ -151,7 +159,14 @@ def buscar_en_internet(query: str) -> str:
         logger.warning("duckduckgo_search not installed; internet search disabled")
         return ""
     try:
-        resultados = DDGS().text(query, max_results=3)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            old_showwarning = warnings.showwarning
+            warnings.showwarning = lambda *args, **kwargs: None
+            try:
+                resultados = DDGS().text(query, max_results=3)
+            finally:
+                warnings.showwarning = old_showwarning
         texto_extraido = " ".join([res.get("body", "") for res in resultados])
         return texto_extraido
     except Exception as e:

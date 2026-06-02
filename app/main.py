@@ -7,9 +7,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 try:
-    from app.history_store import get_chat_messages, list_chats
+    from app.history_store import get_chat_messages, list_chats, set_chat_title
 except Exception:
-    from history_store import get_chat_messages, list_chats
+    from history_store import get_chat_messages, list_chats, set_chat_title
 
 app = FastAPI()
 
@@ -78,6 +78,16 @@ def chats_list():
 @app.get("/api/chats/{chat_id}")
 def chat_history(chat_id: str):
     return JSONResponse({"chat_id": chat_id, "messages": get_chat_messages(chat_id)})
+
+
+@app.post("/api/chats/{chat_id}/rename")
+async def rename_chat(chat_id: str, request: Request):
+    data = await request.json()
+    new_title = data.get("title", "").strip()
+    if not new_title:
+        return JSONResponse({"error": "Title cannot be empty"}, status_code=400)
+    set_chat_title(chat_id, new_title)
+    return JSONResponse({"status": "success"})
 
 
 @app.get("/api/ollama_check")

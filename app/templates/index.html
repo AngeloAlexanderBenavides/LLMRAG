@@ -1,5 +1,6 @@
 {% extends "base.html" %} {% block body %}
 <aside
+  id="chat-sidebar"
   class="sidebar w-[280px] shrink-0 h-full select-none border-r border-white/5"
 >
   <div class="flex flex-col h-full">
@@ -34,7 +35,7 @@
           >{{ app_name }}</span
         >
       </div>
-      <button class="icon-btn" type="button" aria-label="Menu">
+      <button id="sidebar-close-btn" class="icon-btn" type="button" aria-label="Menu">
         <span class="material-symbols-outlined text-[20px]">menu</span>
       </button>
     </div>
@@ -91,7 +92,10 @@
 <main
   class="main-area flex-1 h-full flex flex-col justify-between relative gemini-gradient-bg overflow-hidden"
 >
-  <header class="h-14 px-6 flex items-center justify-end">
+  <header class="h-14 px-6 flex items-center justify-between">
+    <button id="toggle-sidebar-btn" class="icon-btn" type="button" aria-label="Toggle Sidebar">
+      <span class="material-symbols-outlined text-[20px]">menu</span>
+    </button>
     <div class="flex items-center gap-2">
       <button class="icon-btn" type="button" aria-label="History">
         <span class="material-symbols-outlined text-[20px]">history_edu</span>
