@@ -51,6 +51,96 @@ def _get_collection():
         return None
 
 
+def buscar_en_db_qa(pregunta: str) -> Optional[dict]:
+    coleccion = _get_collection()
+    if coleccion is None:
+        return None
+    try:
+        # Buscamos globalmente pares Q&A que tengan el tipo "qa_pair"
+        resultados = coleccion.query(
+            query_texts=[pregunta],
+            n_results=1,
+            where={"type": "qa_pair"}
+        )
+        if not resultados:
+            return None
+        
+        ids = resultados.get("ids")
+        distances = resultados.get("distances")
+        metadatas = resultados.get("metadatas")
+        documents = resultados.get("documents")
+        
+        if ids and ids[0] and distances and distances[0] and metadatas and metadatas[0] and documents and documents[0]:
+            distancia = distances[0][0]
+            metadata = metadatas[0][0]
+            # Umbral de similitud: distancia <= 0.4 indica coincidencia semántica muy cercana
+            if distancia <= 0.4:
+                print(f"[LOG DE AGENTE] Coincidencia encontrada en DB para '{pregunta}'. Pregunta original: '{documents[0][0]}'. Distancia: {distancia}")
+                return {
+                    "question": documents[0][0],
+                    "answer": metadata.get("answer"),
+                    "question_type": metadata.get("question_type", "fija"),
+                    "source": "database_memory"
+                }
+    except Exception as e:
+        logger.warning("Error buscando en base de datos de memoria: %s", e)
+    return None
+
+
+def obtener_contexto_db(pregunta: str) -> str:
+    coleccion = _get_collection()
+    if coleccion is None:
+        return ""
+    try:
+        resultados = coleccion.query(
+            query_texts=[pregunta],
+            n_results=1
+        )
+        if not resultados:
+            return ""
+            
+        ids = resultados.get("ids")
+        documents = resultados.get("documents")
+        metadatas = resultados.get("metadatas")
+        
+        if ids and ids[0] and documents and documents[0]:
+            doc = documents[0][0]
+            metadata = metadatas[0][0] if (metadatas and metadatas[0]) else {}
+            
+            # Si es un par Q&A, estructuramos el contexto con la pregunta y respuesta
+            if metadata.get("type") == "qa_pair":
+                return f"Pregunta anterior similar: {doc}\nRespuesta anterior: {metadata.get('answer')}"
+            else:
+                # Es un snippet de internet o documento plano
+                return doc
+    except Exception as e:
+        logger.warning("Error al obtener contexto de ChromaDB: %s", e)
+    return ""
+
+
+def guardar_en_db_qa(pregunta: str, respuesta: str, question_type: str, chat_id: str) -> None:
+    coleccion = _get_collection()
+    if coleccion is None:
+        return
+    try:
+        print(f"[LOG DE AGENTE] Guardando par Q&A en la base de datos: '{pregunta}' -> '{respuesta[:50]}...'")
+        coleccion.add(
+            documents=[pregunta],
+            metadatas=[{
+                "answer": respuesta,
+                "chat_id": chat_id,
+                "question_type": question_type,
+                "type": "qa_pair"
+            }],
+            ids=[str(uuid.uuid4())]
+        )
+        # Guardar también en el histórico relacional para persistencia
+        save_memory_entry(chat_id, pregunta, respuesta, "database_memory")
+    except Exception as e:
+        logger.warning("Error al guardar en base de datos de memoria: %s", e)
+
+
+
 def _normalize_chat_id(chat_id: Optional[str]) -> str:
     value = (chat_id or "default").strip()
     return value or "default"
@@ -131,7 +221,47 @@ def _get_conversational_history(chat_id: Optional[str], limit: int = 10) -> list
         return []
 
 
-def clasificar_pregunta(pregunta: str, chat_id: Optional[str] = None) -> str:
+def generar_query_busqueda(pregunta: str, history: list[dict]) -> str:
+    if not history:
+        return pregunta
+        
+    prompt_sistema = (
+        "Tu tarea es generar un único término o frase de búsqueda en internet conciso y optimizado para motores de búsqueda (como Google o Bing), "
+        "que combine de manera lógica la última entrada del usuario con el contexto de la conversación anterior.\n\n"
+        "Instrucciones clave:\n"
+        "- Debe ser una frase o conjunto de palabras clave directas para buscar en la web.\n"
+        "- NO respondas la pregunta. Tu única salida debe ser el término de búsqueda.\n"
+        "- Si la última entrada ya es clara y completa por sí sola, devuélvela exactamente igual.\n"
+        "- Evita agregar explicaciones, comentarios, comillas o preámbulos.\n\n"
+        "Ejemplo 1:\n"
+        "Historial:\n"
+        "User: ¿Cuál es el país más grande del mundo?\n"
+        "Assistant: Rusia.\n"
+        "User: ¿y cuál es su capital?\n"
+        "Resultado: capital de Rusia\n\n"
+        "Ejemplo 2:\n"
+        "Historial:\n"
+        "User: Me interesa saber de las universidades en Ecuador.\n"
+        "Assistant: Entendido, ¿sobre qué aspecto te gustaría saber?\n"
+        "User: sobre el ranking de sostenibilidad\n"
+        "Resultado: ranking de sostenibilidad universidades Ecuador"
+    )
+    
+    messages = [
+        {"role": "system", "content": prompt_sistema}
+    ] + history + [{"role": "user", "content": f"Genera la frase de búsqueda para: '{pregunta}'"}]
+    
+    try:
+        query_generado = _chat_with_ollama(messages, temperature=0.0)
+        query_generado = query_generado.strip().replace('"', '').replace("'", "")
+        if query_generado:
+            return query_generado
+    except Exception as e:
+        logger.warning("Error generating search query: %s", e)
+    return pregunta
+
+
+def clasificar_pregunta(pregunta: str, chat_id: Optional[str] = None, history: Optional[list[dict]] = None) -> str:
     # Todo es clasificado mediante el LLM (Inteligencia Artificial) de Ollama, sin filtros de código (sin cosas quemadas).
     prompt_sistema = (
         "Tu única tarea es clasificar la entrada del usuario en una sola palabra en mayúsculas, eligiendo estrictamente de esta lista:\n"
@@ -159,7 +289,8 @@ def clasificar_pregunta(pregunta: str, chat_id: Optional[str] = None) -> str:
         "- NO incluyas introducciones, explicaciones, justificaciones ni signos de puntuación."
     )
 
-    history = _get_conversational_history(chat_id, limit=6)
+    if history is None:
+        history = _get_conversational_history(chat_id, limit=6)
     messages = [{"role": "system", "content": prompt_sistema}] + history + [{"role": "user", "content": pregunta}]
 
     try:
@@ -298,11 +429,32 @@ def check_ollama_available() -> (bool, Optional[str]):
 def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
     chat_id_normalizado = _normalize_chat_id(chat_id)
     ensure_chat(chat_id_normalizado)
+    
+    # 1. Obtener historial conversacional PREVIO (antes de guardar la pregunta actual)
+    history = _get_conversational_history(chat_id_normalizado, limit=8)
+    
+    # 2. Guardar la pregunta actual en la base de datos
     save_message(chat_id_normalizado, "user", pregunta)
     titulo_chat = pregunta.strip().replace("\n", " ")[:60]
     if titulo_chat:
         set_chat_title(chat_id_normalizado, titulo_chat)
-    tipo_pregunta = clasificar_pregunta(pregunta)
+
+    # 3. Revisar la base de datos primero (coincidencia de Q&A)
+    coincidencia = buscar_en_db_qa(pregunta)
+    if coincidencia:
+        answer = coincidencia["answer"]
+        source = coincidencia["source"]
+        q_type = coincidencia["question_type"]
+        save_message(chat_id_normalizado, "assistant", answer, source=source, question_type=q_type)
+        return {
+            "answer": answer,
+            "source": source,
+            "question_type": q_type,
+            "chat_id": chat_id_normalizado,
+        }
+
+    # 4. Clasificar la pregunta pasándole el historial pre-cargado
+    tipo_pregunta = clasificar_pregunta(pregunta, chat_id=chat_id_normalizado, history=history)
 
     if tipo_pregunta == "saludo":
         respuesta_saludo = responder_saludo(pregunta)
@@ -337,110 +489,147 @@ def consultar_agente(pregunta: str, chat_id: Optional[str] = None) -> dict:
         }
 
     if tipo_pregunta == "variable":
-        respuesta_variable = responder_variable(pregunta)
-        save_message(
-            chat_id_normalizado,
-            "assistant",
-            respuesta_variable["answer"],
-            source=respuesta_variable["source"],
-            question_type="variable",
-        )
-        return {
-            "answer": respuesta_variable["answer"],
-            "source": respuesta_variable["source"],
-            "question_type": "variable",
-            "chat_id": chat_id_normalizado,
-        }
-
-    coleccion = _get_collection()
-    contexto = ""
-    if coleccion is not None:
+        # Preguntar al LLM directamente con temperatura 0.0
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Responde con exactitud y de forma directa a la pregunta del usuario. "
+                    "Si no tienes o no conoces la información exacta y actual en tu conocimiento interno para responder con precisión, responde exactamente con la palabra: NO_SE"
+                ),
+            },
+        ] + history + [{"role": "user", "content": pregunta}]
+        
         try:
-            resultados_db = coleccion.query(
-                query_texts=[pregunta],
-                n_results=1,
-                where={"chat_id": chat_id_normalizado},
-            )
-            docs = resultados_db.get("documents") if isinstance(
-                resultados_db, dict) else None
-            if docs and docs[0]:
-                contexto = docs[0][0]
+            respuesta_llm = _chat_with_ollama(messages, temperature=0.0)
         except Exception as e:
-            logger.warning("Error querying ChromaDB: %s", e)
+            logger.warning("Error calling Ollama in variable mode: %s", e)
+            respuesta_llm = "NO_SE"
 
+        if "NO_SE" not in respuesta_llm.upper() and respuesta_llm.strip():
+            # LLM conoce la respuesta. Guardamos en DB y retornamos.
+            guardar_en_db_qa(pregunta, respuesta_llm, "variable", chat_id_normalizado)
+            save_message(chat_id_normalizado, "assistant", respuesta_llm, source="llm_variable", question_type="variable")
+            return {
+                "answer": respuesta_llm,
+                "source": "llm_variable",
+                "question_type": "variable",
+                "chat_id": chat_id_normalizado,
+            }
+
+        # Si el LLM no sabe, buscamos en internet
+        query_busqueda = generar_query_busqueda(pregunta, history)
+        info_internet = buscar_en_internet(query_busqueda)
+        
+        if not info_internet:
+            # Fallback de fecha local si es relevante
+            if any(palabra in pregunta.lower() for palabra in ("día", "fecha", "hoy", "date")):
+                fecha_actual = datetime.now().strftime("%d-%m-%Y")
+                ans = f"Hoy es {fecha_actual}."
+                save_message(chat_id_normalizado, "assistant", ans, source="system_date", question_type="variable")
+                return {"answer": ans, "source": "system_date", "question_type": "variable", "chat_id": chat_id_normalizado}
+                
+            ans = f"No encontré información actualizada sobre: {pregunta}"
+            save_message(chat_id_normalizado, "assistant", ans, source="internet", question_type="variable")
+            return {"answer": ans, "source": "internet", "question_type": "variable", "chat_id": chat_id_normalizado}
+
+        # Formular respuesta final con info de internet
+        prompt_final = (
+            f"Pregunta: {pregunta}\n"
+            f"Información obtenida de internet: {info_internet}\n"
+            "Responde a la pregunta usando la información de internet de forma clara, natural y corta."
+        )
+        final_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Redacta una respuesta amigable, corta, natural y directa basada estrictamente en la información de internet proporcionada. "
+                    "Evita explicaciones largas, responde con exactitud lo solicitado."
+                ),
+            },
+        ] + history + [{"role": "user", "content": prompt_final}]
+        
+        try:
+            respuesta_final = _chat_with_ollama(final_messages, temperature=0.2)
+            answer_text = respuesta_final or info_internet
+        except Exception as e:
+            logger.warning("Error calling Ollama for final variable answer: %s", e)
+            answer_text = info_internet
+
+        # Guardar en base de datos
+        guardar_en_db_qa(pregunta, answer_text, "variable", chat_id_normalizado)
+        save_message(chat_id_normalizado, "assistant", answer_text, source="internet", question_type="variable")
+        return {"answer": answer_text, "source": "internet", "question_type": "variable", "chat_id": chat_id_normalizado}
+
+    # Si es "fija"
+    # RAG: Buscar contexto
+    contexto = obtener_contexto_db(pregunta)
+    
     prompt_evaluacion = (
         f"Contexto: {contexto}\n"
         f"Pregunta: {pregunta}\n"
-        "Instruccion: Responde solo lo que se pidió, en forma breve y directa. "
-        "Si no puedes responder con exactitud usando el contexto o tu conocimiento seguro, responde EXACTAMENTE y únicamente con la palabra: NO_SE"
+        "Instrucción: Intenta responder de manera clara y natural a la pregunta usando el contexto o tu conocimiento seguro. "
+        "Si no puedes responder con precisión y seguridad usando el contexto proporcionado, responde únicamente con la palabra: NO_SE"
     )
 
+    eval_messages = [
+        {
+            "role": "system",
+            "content": (
+                "Responde solo a la pregunta del usuario de manera clara, natural y concisa."
+            ),
+        },
+    ] + history + [{"role": "user", "content": prompt_evaluacion}]
+
     try:
-        respuesta_llm = _chat_with_ollama(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Responde solo a la pregunta del usuario. "
-                        "No des explicaciones, no agregues contexto extra, no hagas listas y sé breve."
-                    ),
-                },
-                {"role": "user", "content": prompt_evaluacion},
-            ],
-            temperature=0.0,
-        )
+        respuesta_llm = _chat_with_ollama(eval_messages, temperature=0.0)
     except Exception as e:
-        logger.warning("Error calling Ollama: %s", e)
-        save_message(chat_id_normalizado, "assistant",
-                     f"Error al comunicarse con Ollama: {e}", source="error", question_type="fija")
-        return {"answer": f"Error al comunicarse con Ollama: {e}", "source": "error", "question_type": "fija", "chat_id": chat_id_normalizado}
+        logger.warning("Error calling Ollama in fija mode: %s", e)
+        respuesta_llm = "NO_SE"
 
-    if "NO_SE" in respuesta_llm.upper():
-        info_internet = buscar_en_internet(pregunta)
-        if info_internet:
-            if coleccion is not None:
-                try:
-                    coleccion.add(
-                        documents=[info_internet],
-                        metadatas=[{"fuente": "internet", "query": pregunta,
-                                    "chat_id": chat_id_normalizado}],
-                        ids=[str(uuid.uuid4())],
-                    )
-                except Exception as e:
-                    logger.warning("Failed to save info to ChromaDB: %s", e)
-            save_memory_entry(chat_id_normalizado, pregunta, info_internet, "internet")
+    if "NO_SE" not in respuesta_llm.upper() and respuesta_llm.strip():
+        # LLM conoce la respuesta. Guardamos en DB y retornamos.
+        guardar_en_db_qa(pregunta, respuesta_llm, "fija", chat_id_normalizado)
+        save_message(chat_id_normalizado, "assistant", respuesta_llm, source="local_or_model", question_type="fija")
+        return {
+            "answer": respuesta_llm,
+            "source": "local_or_model",
+            "question_type": "fija",
+            "chat_id": chat_id_normalizado,
+        }
 
-            prompt_final = f"Responde a la pregunta '{pregunta}' basándote en esta nueva información de internet: {info_internet}"
-            try:
-                respuesta_final = _chat_with_ollama(
-                    [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Responde con una sola respuesta breve y directa. "
-                                "No expliques el proceso, no menciones el contexto y no agregues información extra."
-                            ),
-                        },
-                        {"role": "user", "content": prompt_final},
-                    ],
-                    temperature=0.2,
-                )
-                save_message(chat_id_normalizado, "assistant",
-                             respuesta_final or info_internet, source="internet", question_type="fija")
-                return {"answer": respuesta_final or info_internet, "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
-            except Exception as e:
-                logger.warning("Error calling Ollama for final answer: %s", e)
-                save_message(chat_id_normalizado, "assistant",
-                             "Se obtuvo información de internet pero falló la generación final del LLM.", source="internet", question_type="fija")
-                return {"answer": "Se obtuvo información de internet pero falló la generación final del LLM.", "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
-        else:
-            save_message(chat_id_normalizado, "assistant",
-                         "No se encontró información en internet.", source="internet", question_type="fija")
-            return {"answer": "No se encontró información en internet.", "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
+    # Si no sabe (NO_SE), buscamos en internet
+    query_busqueda = generar_query_busqueda(pregunta, history)
+    info_internet = buscar_en_internet(query_busqueda)
+    
+    if not info_internet:
+        ans = "No se encontró información en internet."
+        save_message(chat_id_normalizado, "assistant", ans, source="internet", question_type="fija")
+        return {"answer": ans, "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
 
-    save_message(chat_id_normalizado, "assistant", respuesta_llm,
-                 source="local_or_model", question_type="fija")
-    return {"answer": respuesta_llm, "source": "local_or_model", "question_type": "fija", "chat_id": chat_id_normalizado}
+    # Formular respuesta final amigable con info de internet
+    prompt_final = f"Pregunta: {pregunta}\nInformación obtenida de internet: {info_internet}\nResponde a la pregunta usando la información de internet de forma clara, natural y detallada."
+    final_messages = [
+        {
+            "role": "system",
+            "content": (
+                "Redacta una respuesta amigable, completa y bien explicada usando los datos recuperados de internet. "
+                "Asegúrate de dar una respuesta detallada e informativa que responda completamente a la inquietud del usuario."
+            ),
+        },
+    ] + history + [{"role": "user", "content": prompt_final}]
+    
+    try:
+        respuesta_final = _chat_with_ollama(final_messages, temperature=0.2)
+        answer_text = respuesta_final or info_internet
+    except Exception as e:
+        logger.warning("Error calling Ollama for final fija answer: %s", e)
+        answer_text = info_internet
+
+    # Guardar en base de datos
+    guardar_en_db_qa(pregunta, answer_text, "fija", chat_id_normalizado)
+    save_message(chat_id_normalizado, "assistant", answer_text, source="internet", question_type="fija")
+    return {"answer": answer_text, "source": "internet", "question_type": "fija", "chat_id": chat_id_normalizado}
 
 
 def _yield_string_as_tokens(text: str) -> Generator[dict, None, None]:
@@ -473,10 +662,28 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
     if titulo_chat:
         set_chat_title(chat_id_normalizado, titulo_chat)
 
+    # 3. Revisar la base de datos primero (coincidencia de Q&A)
+    yield {"type": "status", "content": "Revisando base de datos..."}
+    coincidencia = buscar_en_db_qa(pregunta)
+    if coincidencia:
+        print(f"[LOG DE AGENTE] [DB COINCIDENCIA] Retornando respuesta guardada de inmediato...")
+        answer = coincidencia["answer"]
+        source = coincidencia["source"]
+        q_type = coincidencia["question_type"]
+        
+        # Transmitimos la respuesta palabra por palabra
+        for t in _yield_string_as_tokens(answer):
+            yield t
+            
+        save_message(chat_id_normalizado, "assistant", answer, source=source, question_type=q_type)
+        yield {"type": "done", "chat_id": chat_id_normalizado, "source": source, "answer": answer}
+        print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+        return
+
+    # 4. Clasificar la pregunta pasándole el historial pre-cargado
     yield {"type": "status", "content": "Clasificando pregunta..."}
-    
     print(f"[LOG DE AGENTE] Ejecutando clasificación por IA con contexto...")
-    tipo_pregunta = clasificar_pregunta(pregunta, chat_id=chat_id_normalizado)
+    tipo_pregunta = clasificar_pregunta(pregunta, chat_id=chat_id_normalizado, history=history)
     print(f"[LOG DE AGENTE] Clasificación obtenida: {tipo_pregunta.upper()}")
 
     if tipo_pregunta == "saludo":
@@ -558,8 +765,8 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             {
                 "role": "system",
                 "content": (
-                    "Responde solo a lo pedido por el usuario. No des explicaciones, ejemplos ni contexto extra. "
-                    "Máximo una frase corta. Si no conoces la respuesta exacta y actual, responde exactamente: NO_SE"
+                    "Responde con exactitud y de forma directa a la pregunta del usuario. "
+                    "Si no tienes o no conoces la información exacta y actual en tu conocimiento interno para responder con precisión, responde exactamente con la palabra: NO_SE"
                 ),
             },
         ] + history + [{"role": "user", "content": pregunta}]
@@ -573,20 +780,26 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             print(f"[LOG DE AGENTE] [VARIABLE] Error al llamar Ollama: {e}")
             respuesta_llm = "NO_SE"
 
-        if "NO_SE" not in respuesta_llm.upper():
-            print(f"[LOG DE AGENTE] [VARIABLE] LLM conoce la respuesta. Transmitiendo en tiempo real...")
+        if "NO_SE" not in respuesta_llm.upper() and respuesta_llm.strip():
+            print(f"[LOG DE AGENTE] [VARIABLE] LLM conoce la respuesta. Transmitiendo en tiempo real y guardando...")
             for t in _yield_string_as_tokens(respuesta_llm):
                 yield t
+            # Guardamos en la base de datos
+            guardar_en_db_qa(pregunta, respuesta_llm, "variable", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", respuesta_llm, source="llm_variable", question_type="variable")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "llm_variable", "answer": respuesta_llm}
             print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
             return
 
-        print(f"[LOG DE AGENTE] [VARIABLE] El LLM respondió NO_SE o requiere datos. Iniciando búsqueda web...")
+        print(f"[LOG DE AGENTE] [VARIABLE] El LLM respondió NO_SE o requiere datos. Iniciando búsqueda web con contexto...")
         yield {"type": "status", "content": "Buscando en Internet..."}
         
-        print(f"[LOG DE AGENTE] [VARIABLE] Ejecutando búsqueda en DuckDuckGo para: '{pregunta}'")
-        info_internet = buscar_en_internet(pregunta)
+        # Generar query de búsqueda optimizado con el contexto del historial
+        query_busqueda = generar_query_busqueda(pregunta, history)
+        print(f"[LOG DE AGENTE] [VARIABLE] Query de búsqueda generado con contexto: '{query_busqueda}'")
+        
+        print(f"[LOG DE AGENTE] [VARIABLE] Ejecutando búsqueda en DuckDuckGo para: '{query_busqueda}'")
+        info_internet = buscar_en_internet(query_busqueda)
         print(f"[LOG DE AGENTE] [VARIABLE] Información recuperada de internet: {info_internet[:200]}...")
 
         if not info_internet:
@@ -613,15 +826,15 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
         yield {"type": "status", "content": "Redactando respuesta desde Internet..."}
         prompt_final = (
             f"Pregunta: {pregunta}\n"
-            f"Información de internet: {info_internet}\n"
-            "Responde solo lo que se pidió. No agregues contexto, explicaciones ni listas."
+            f"Información obtenida de internet: {info_internet}\n"
+            "Responde a la pregunta usando la información de internet de forma clara, natural y corta."
         )
         final_messages = [
             {
                 "role": "system",
                 "content": (
-                    "Responde con una sola respuesta breve y directa. "
-                    "No expliques el proceso, no menciones el contexto y no agregues información extra."
+                    "Redacta una respuesta amigable, corta, natural y directa basada estrictamente en la información de internet proporcionada. "
+                    "Evita explicaciones largas, responde con exactitud lo solicitado."
                 ),
             },
         ] + history + [{"role": "user", "content": prompt_final}]
@@ -637,6 +850,8 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     yield {"type": "token", "content": token}
             
             print(f"[LOG DE AGENTE] [VARIABLE] Redacción final completada: '{full_text}'")
+            # Guardamos en la base de datos
+            guardar_en_db_qa(pregunta, full_text or info_internet, "variable", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", full_text or info_internet, source="internet", question_type="variable")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": full_text or info_internet}
             print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
@@ -646,6 +861,8 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             ans = info_internet
             for t in _yield_string_as_tokens(ans):
                 yield t
+            # Guardamos en la base de datos
+            guardar_en_db_qa(pregunta, ans, "variable", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", ans, source="internet", question_type="variable")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": ans}
             print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
@@ -654,38 +871,20 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
     # Pregunta Fija (RAG)
     print(f"[LOG DE AGENTE] [FIJA] Buscando en base de conocimientos ChromaDB...")
     yield {"type": "status", "content": "Buscando en base de conocimientos..."}
-    coleccion = _get_collection()
-    contexto = ""
-    if coleccion is not None:
-        try:
-            resultados_db = coleccion.query(
-                query_texts=[pregunta],
-                n_results=1,
-                where={"chat_id": chat_id_normalizado},
-            )
-            print(f"[LOG DE AGENTE] [FIJA] Consulta ChromaDB completada. Resultados: {resultados_db}")
-            docs = resultados_db.get("documents") if isinstance(resultados_db, dict) else None
-            if docs and docs[0]:
-                contexto = docs[0][0]
-                print(f"[LOG DE AGENTE] [FIJA] Contexto RAG recuperado: '{contexto[:200]}...'")
-            else:
-                print(f"[LOG DE AGENTE] [FIJA] No se encontró contexto previo para este chat en ChromaDB.")
-        except Exception as e:
-            print(f"[LOG DE AGENTE] [ERROR CHROMADB] Error en consulta: {e}")
+    contexto = obtener_contexto_db(pregunta)
 
     prompt_evaluacion = (
         f"Contexto: {contexto}\n"
         f"Pregunta: {pregunta}\n"
-        "Instruccion: Responde solo lo que se pidió, en forma breve y directa. "
-        "Si no puedes responder con exactitud usando el contexto o tu conocimiento seguro, responde EXACTAMENTE y únicamente con la palabra: NO_SE"
+        "Instrucción: Intenta responder de manera clara y natural a la pregunta usando el contexto o tu conocimiento seguro. "
+        "Si no puedes responder con precisión y seguridad usando el contexto proporcionado, responde únicamente con la palabra: NO_SE"
     )
 
     eval_messages = [
         {
             "role": "system",
             "content": (
-                "Responde solo a la pregunta del usuario. "
-                "No des explicaciones, no agregues contexto extra, no hagas listas y sé breve."
+                "Responde solo a la pregunta del usuario de manera clara, natural y concisa."
             ),
         },
     ] + history + [{"role": "user", "content": prompt_evaluacion}]
@@ -699,43 +898,37 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
         print(f"[LOG DE AGENTE] [FIJA] Error al llamar a Ollama para evaluación: {e}")
         respuesta_llm = "NO_SE"
 
-    if "NO_SE" not in respuesta_llm.upper():
-        print(f"[LOG DE AGENTE] [FIJA] El LLM conoce la respuesta segura. Transmitiendo en tiempo real...")
+    if "NO_SE" not in respuesta_llm.upper() and respuesta_llm.strip():
+        print(f"[LOG DE AGENTE] [FIJA] El LLM conoce la respuesta segura. Transmitiendo en tiempo real y guardando...")
         for t in _yield_string_as_tokens(respuesta_llm):
             yield t
+        # Guardamos en la base de datos
+        guardar_en_db_qa(pregunta, respuesta_llm, "fija", chat_id_normalizado)
         save_message(chat_id_normalizado, "assistant", respuesta_llm, source="local_or_model", question_type="fija")
         yield {"type": "done", "chat_id": chat_id_normalizado, "source": "local_or_model", "answer": respuesta_llm}
         print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
         return
 
-    print(f"[LOG DE AGENTE] [FIJA] El LLM respondió NO_SE. Iniciando búsqueda web de fallback...")
+    print(f"[LOG DE AGENTE] [FIJA] El LLM respondió NO_SE. Iniciando búsqueda web de fallback con contexto...")
     yield {"type": "status", "content": "Buscando información en Internet..."}
     
-    print(f"[LOG DE AGENTE] [FIJA] Ejecutando búsqueda en DuckDuckGo para: '{pregunta}'")
-    info_internet = buscar_en_internet(pregunta)
+    # Generar query de búsqueda optimizado con el contexto del historial
+    query_busqueda = generar_query_busqueda(pregunta, history)
+    print(f"[LOG DE AGENTE] [FIJA] Query de búsqueda generado con contexto: '{query_busqueda}'")
+    
+    print(f"[LOG DE AGENTE] [FIJA] Ejecutando búsqueda en DuckDuckGo para: '{query_busqueda}'")
+    info_internet = buscar_en_internet(query_busqueda)
     print(f"[LOG DE AGENTE] [FIJA] Información de Internet recuperada: {info_internet[:200]}...")
 
     if info_internet:
-        if coleccion is not None:
-            try:
-                print(f"[LOG DE AGENTE] [FIJA] Guardando nueva información en ChromaDB para el chat '{chat_id_normalizado}'...")
-                coleccion.add(
-                    documents=[info_internet],
-                    metadatas=[{"fuente": "internet", "query": pregunta, "chat_id": chat_id_normalizado}],
-                    ids=[str(uuid.uuid4())],
-                )
-            except Exception as e:
-                print(f"[LOG DE AGENTE] [ERROR CHROMADB] No se pudo guardar la información: {e}")
-        save_memory_entry(chat_id_normalizado, pregunta, info_internet, "internet")
-
         yield {"type": "status", "content": "Redactando respuesta desde Internet..."}
-        prompt_final = f"Responde a la pregunta '{pregunta}' basándote en esta nueva información de internet: {info_internet}"
+        prompt_final = f"Pregunta: {pregunta}\nInformación obtenida de internet: {info_internet}\nResponde a la pregunta usando la información de internet de forma clara, natural y detallada."
         final_messages = [
             {
                 "role": "system",
                 "content": (
-                    "Responde con una sola respuesta breve y directa. "
-                    "No expliques el proceso, no menciones el contexto y no agregues información extra."
+                    "Redacta una respuesta amigable, completa y bien explicada usando los datos recuperados de internet. "
+                    "Asegúrate de dar una respuesta detallada e informativa que responda completamente a la inquietud del usuario."
                 ),
             },
         ] + history + [{"role": "user", "content": prompt_final}]
@@ -751,6 +944,8 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     yield {"type": "token", "content": token}
             
             print(f"[LOG DE AGENTE] [FIJA] Redacción final completada: '{full_text}'")
+            # Guardamos en la base de datos
+            guardar_en_db_qa(pregunta, full_text or info_internet, "fija", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", full_text or info_internet, source="internet", question_type="fija")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": full_text or info_internet}
             print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
@@ -760,6 +955,8 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             ans = info_internet
             for t in _yield_string_as_tokens(ans):
                 yield t
+            # Guardamos en la base de datos
+            guardar_en_db_qa(pregunta, ans, "fija", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", ans, source="internet", question_type="fija")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": ans}
             print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")

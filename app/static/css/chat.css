@@ -441,3 +441,54 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* Estilos para el renderizado de Markdown dentro del cuerpo del mensaje */
+.message-body p {
+  margin-bottom: 0.75rem;
+}
+.message-body p:last-child {
+  margin-bottom: 0;
+}
+.message-body strong, .message-body b {
+  font-weight: 600;
+  color: white;
+}
+.message-body em, .message-body i {
+  font-style: italic;
+}
+.message-body ul {
+  list-style-type: disc !important;
+  margin-left: 1.5rem !important;
+  margin-bottom: 0.75rem !important;
+}
+.message-body ol {
+  list-style-type: decimal !important;
+  margin-left: 1.5rem !important;
+  margin-bottom: 0.75rem !important;
+}
+.message-body li {
+  margin-bottom: 0.25rem;
+  display: list-item !important;
+}
+.message-body code {
+  font-family: monospace;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.85em;
+  color: #ff79c6;
+}
+.message-body pre {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+}
+.message-body pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 0.9em;
+}
+

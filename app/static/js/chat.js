@@ -71,7 +71,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const body = document.createElement('div');
     body.className = 'message-body';
-    body.textContent = text;
+    if (role === 'bot' && typeof marked !== 'undefined') {
+      body.innerHTML = marked.parse(text);
+    } else {
+      body.textContent = text;
+    }
     message.appendChild(body);
 
     log.appendChild(message);
@@ -249,7 +253,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 accumulatedAnswer += event.content;
-                botBodyElement.textContent = accumulatedAnswer;
+                if (typeof marked !== 'undefined') {
+                  botBodyElement.innerHTML = marked.parse(accumulatedAnswer);
+                } else {
+                  botBodyElement.textContent = accumulatedAnswer;
+                }
                 scrollToBottom();
               }
               else if (event.type === 'done') {
