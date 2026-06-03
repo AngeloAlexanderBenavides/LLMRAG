@@ -108,22 +108,30 @@ def obtener_contexto_db(pregunta: str) -> str:
             return ""
             
         ids = resultados.get("ids")
+        distances = resultados.get("distances")
         documents = resultados.get("documents")
         metadatas = resultados.get("metadatas")
         
-        if ids and ids[0] and documents and documents[0]:
-            doc = documents[0][0]
-            metadata = metadatas[0][0] if (metadatas and metadatas[0]) else {}
-            
-            # Si es un par Q&A, estructuramos el contexto con la pregunta y respuesta
-            if metadata.get("type") == "qa_pair":
-                return f"Pregunta anterior similar: {doc}\nRespuesta anterior: {metadata.get('answer')}"
+        if ids and ids[0] and distances and distances[0] and documents and documents[0]:
+            distancia = distances[0][0]
+            # Umbral de similitud para contexto: evitamos inyectar contexto de temas no relacionados.
+            # Una distancia L2 > 0.8 es demasiado alejada semánticamente.
+            if distancia <= 0.8:
+                doc = documents[0][0]
+                metadata = metadatas[0][0] if (metadatas and metadatas[0]) else {}
+                
+                # Si es un par Q&A, estructuramos el contexto con la pregunta y respuesta
+                if metadata.get("type") == "qa_pair":
+                    return f"Pregunta anterior similar: {doc}\nRespuesta anterior: {metadata.get('answer')}"
+                else:
+                    # Es un snippet de internet o documento plano
+                    return doc
             else:
-                # Es un snippet de internet o documento plano
-                return doc
+                print(f"[LOG DE AGENTE] Contexto de base de datos descartado por distancia muy alta ({distancia:.4f}) para: '{pregunta}'")
     except Exception as e:
         logger.warning("Error al obtener contexto de ChromaDB: %s", e)
     return ""
+
 
 
 def guardar_en_db_qa(pregunta: str, respuesta: str, question_type: str, chat_id: str) -> None:
