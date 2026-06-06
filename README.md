@@ -17,13 +17,13 @@ Before using the app, make sure Ollama is running and the model exists locally.
 
 ```bash
 ollama serve
-ollama pull llama3:latest
+ollama pull qwen2.5:3b
 ```
 
 If you want to use another model, set `OLLAMA_MODEL` before starting the app:
 
 ```powershell
-$env:OLLAMA_MODEL = "llama3.1:latest"
+$env:OLLAMA_MODEL = "qwen2.5:3b"
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -69,7 +69,7 @@ If you prefer `pip` only, `requirements.txt` is available and works with `pip in
 
 ```powershell
 ollama serve
-ollama pull llama3:latest
+ollama pull qwen2.5:3b
 ```
 
 3. Verify Ollama from the project:

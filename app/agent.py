@@ -199,7 +199,7 @@ def _chat_with_ollama(
     for _ in range(max(retries, 1)):
         try:
             respuesta = ollama.chat(
-                model=os.environ.get("OLLAMA_MODEL", "llama3:latest"),
+                model=os.environ.get("OLLAMA_MODEL", "qwen2.5:3b"),
                 messages=messages,
                 options={"temperature": temperature},
                 stream=stream
@@ -442,7 +442,7 @@ def check_ollama_available() -> (bool, Optional[str]):
     if ollama is None:
         return False, "ollama package not installed"
     try:
-        _ = ollama.chat(model=os.environ.get("OLLAMA_MODEL", "llama3:latest"), messages=[
+        _ = ollama.chat(model=os.environ.get("OLLAMA_MODEL", "qwen2.5:3b"), messages=[
                         {"role": "user", "content": "PING"}])
         return True, None
     except Exception as e:

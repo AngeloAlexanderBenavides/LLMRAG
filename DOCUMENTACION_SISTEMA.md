@@ -13,7 +13,7 @@ graph TD
     A[Frontend: HTML5 / CSS / Vanilla JS] <-->|HTTP / SSE Stream| B[Backend: FastAPI / Uvicorn]
     B <-->|Historial y Memoria Relacional| C[(SQLite: chat_history.db)]
     B <-->|Búsqueda Semántica Global| D[(ChromaDB: memoria_agente)]
-    B <-->|Inferencia de Modelos| E[Ollama: Modelo Llama3]
+    B <-->|Inferencia de Modelos| E[Ollama: Modelo Qwen 2.5 3B]
     B -->|Búsquedas en Internet de Fallback| F[API DuckDuckGo: ddgs]
 ```
 
@@ -27,7 +27,7 @@ graph TD
    - **JavaScript (Vanilla JS)**: Controla las animaciones de la UI, la comunicación por Server-Sent Events (SSE) para respuestas en streaming, el colapso del menú lateral y las ventanas de renombrado.
    - **Marked.js**: Biblioteca integrada para renderizar Markdown (listas, bloques de código, negritas, etc.) directamente en las burbujas del chat.
 3. **Modelos de Lenguaje (LLM)**:
-   - **Ollama**: Orquestador local para ejecutar modelos como `llama3:latest` o `llama3.1:latest` con latencia baja y sin depender de APIs de pago externas.
+   - **Ollama**: Orquestador local para ejecutar modelos como `qwen2.5:3b` con latencia baja y sin depender de APIs de pago externas.
 4. **Base de Datos Vectorial (RAG)**:
    - **ChromaDB**: Base de datos vectorial embebida que almacena los conocimientos adquiridos. Se utiliza para identificar si el usuario está realizando preguntas equivalentes semánticamente a algo que el agente ya aprendió o contestó antes.
 5. **Base de Datos Relacional (Historial)**:
@@ -193,5 +193,5 @@ IA/
 
 * **Descargar el modelo en Ollama**:
   ```bash
-  ollama pull llama3:latest
+  ollama pull qwen2.5:3b
   ```
