@@ -43,30 +43,34 @@ El agente de IA implementa un flujo inteligente que prioriza el conocimiento exi
 
 ```mermaid
 graph TD
-    Start([Recibir Pregunta del Usuario]) --> DB_Check{1. ¿Existe en ChromaDB?}
+    Start([Recibir Pregunta del Usuario]) --> DB_Query[1. Consultar ChromaDB con la pregunta]
+    DB_Query --> Match_Check{2. ¿Hay coincidencia?}
     
-    %% Caso Cache Hit
-    DB_Check -->|SÍ: Distancia <= 0.4| Return_DB[Retornar Respuesta desde ChromaDB de inmediato] --> End
+    %% Caso Cache Hit por coincidencia exacta
+    Match_Check -->|A. Coincidencia exacta de texto normalizado| Return_DB[Retornar Respuesta de inmediato sin LLM] --> End
+    
+    %% Caso Cache Hit por equivalencia semántica
+    Match_Check -->|B. Distancia <= 0.70 + Confirmación LLM| Return_DB
     
     %% Caso Cache Miss
-    DB_Check -->|NO: Distancia > 0.4| Classify[2. Clasificar Pregunta mediante LLM]
+    Match_Check -->|C. Distancia > 0.70 ó Rechazo LLM| Classify[3. Clasificar Pregunta mediante LLM]
     
     Classify --> Intention{¿Qué tipo de pregunta es?}
     
-    Intention -->|Saludo / Incompleta| Direct_LLM[3. LLM responde directamente] --> End
+    Intention -->|Saludo / Incompleta| Direct_LLM[4. LLM responde directamente] --> End
     
-    Intention -->|Fija o Variable| Query_LLM_RAG[3. Preguntar al LLM con contexto de la Base de Datos]
+    Intention -->|Fija o Variable| Query_LLM_RAG[4. Preguntar al LLM con contexto de la Base de Datos]
     
-    Query_LLM_RAG --> LLM_Response{4. ¿El LLM conoce la respuesta?}
+    Query_LLM_RAG --> LLM_Response{5. ¿El LLM conoce la respuesta?}
     
     %% LLM Sabe
-    LLM_Response -->|SÍ: No responde 'NO_SE'| Save_QA[5. Guardar par Q&A en ChromaDB y SQLite] --> Render[Responder al Usuario] --> End
+    LLM_Response -->|SÍ: No responde 'NO_SE'| Save_QA[6. Guardar par Q&A en ChromaDB y SQLite] --> Render[Responder al Usuario] --> End
     
     %% LLM No Sabe (Fallback)
-    LLM_Response -->|NO: Responde 'NO_SE'| Formulate_Search[5. LLM formula frase de búsqueda óptima]
-    Formulate_Search --> Web_Search[6. Realizar búsqueda en internet con DDGS]
-    Web_Search --> Synthesize[7. Enviar snippets web al LLM para formular respuesta amigable]
-    Synthesize --> Save_Web_QA[8. Guardar par Q&A en ChromaDB y SQLite]
+    LLM_Response -->|NO: Responde 'NO_SE'| Formulate_Search[6. LLM formula frase de búsqueda óptima]
+    Formulate_Search --> Web_Search[7. Realizar búsqueda en internet con DDGS]
+    Web_Search --> Synthesize[8. Enviar snippets web al LLM para formular respuesta amigable]
+    Synthesize --> Save_Web_QA[9. Guardar par Q&A en ChromaDB y SQLite]
     Save_Web_QA --> Render --> End
 ```
 
@@ -123,11 +127,12 @@ Se almacena de forma persistente en la carpeta [memoria_agente/](file:///f:/Ange
   }
   ```
 
-#### Búsqueda Global y Umbral de Similitud Semántica
+#### Búsqueda Global y Coincidencia en Caché (Bypass de Flujo)
 * **Búsqueda Global**: Al buscar conocimiento en ChromaDB, no se aplica ningún filtro de `chat_id`. Esto significa que si el chatbot aprende algo en la *"Conversación A"*, el conocimiento se comparte de inmediato y estará disponible de forma global para responder preguntas similares en la *"Conversación B"*.
-* **Umbrales de Similitud (Distance Thresholds)**: ChromaDB calcula la distancia semántica (por defecto, la distancia L2 al cuadrado) entre el vector de la pregunta nueva y los vectores guardados:
-  * **Caché Directa (`distancia <= 0.4`)**: Si la distancia es menor o igual a `0.4`, representa preguntas semánticamente equivalentes pero con redacción ligeramente diferente. El agente recupera el valor de `metadata["answer"]` y responde de inmediato, saltándose la inferencia del LLM o búsquedas en internet.
-  * **Recuperación de Contexto (`distancia <= 0.8`)**: Cuando el agente busca contexto para preguntas de tipo `fija`, exige que la distancia sea menor o igual a `0.8`. Si la distancia es mayor, se descarta el contexto por considerarlo ruidoso e irrelevante (por ejemplo, evitaría inyectar información de "sal" en una consulta sobre "CPU"), permitiendo que el LLM resuelva correctamente la pregunta basándose en el historial de la conversación.
+* **Estrategia de Coincidencia de Preguntas**: Para evitar procesar de nuevo preguntas similares y realizar búsquedas web o inferencias complejas de forma innecesaria, se aplican dos niveles de verificación secuencial sobre los 5 resultados más cercanos de ChromaDB:
+  1. **Coincidencia Exacta Normalizada (Sin llamadas a LLM)**: Se aplica una normalización básica del texto de la pregunta (conversión a minúsculas, eliminación de acentos/tildes, eliminación de signos de puntuación como `¿?¡!.` y eliminación de espacios redundantes). Si el texto normalizado de la pregunta actual es idéntico al de una pregunta previamente guardada, se retorna su respuesta asociada de inmediato.
+  2. **Coincidencia Semántica Inteligente (`distancia <= 0.70` + Verificación por LLM)**: Si el texto no es idéntico pero la distancia calculada por ChromaDB es menor o igual a `0.70`, el sistema realiza una llamada rápida a Ollama (`son_preguntas_equivalentes`) para validar si ambas preguntas tienen exactamente la misma intención y buscan la misma información. Si el LLM confirma la equivalencia semántica, se retorna la respuesta de inmediato.
+* **Recuperación de Contexto para RAG (`distancia <= 0.8`)**: Cuando el agente busca contexto histórico para preguntas estables de tipo `fija`, exige que la distancia sea menor o igual a `0.8`. Si la distancia es mayor, se descarta el contexto por considerarlo irrelevante (evitando inyectar ruidos o temas no relacionados), permitiendo que el LLM resuelva la pregunta basándose en su conocimiento interno o el historial.
 
 ---
 

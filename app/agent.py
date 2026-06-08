@@ -59,15 +59,54 @@ def _get_collection():
         return None
 
 
+def normalizar_texto(texto: str) -> str:
+    import re
+    import unicodedata
+    texto = texto.lower()
+    # Eliminar acentos/tildes
+    texto = "".join(
+        c for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+    # Eliminar signos de puntuación comunes y espacios extra
+    texto = re.sub(r"[¿?¡!\.,;\(\)\-\[\]\"']", "", texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
+
+
+def son_preguntas_equivalentes(q1: str, q2: str) -> bool:
+    prompt_sistema = (
+        "Determina si las siguientes dos preguntas tienen el mismo significado, "
+        "intención y buscan obtener exactamente la misma información, incluso si "
+        "están redactadas de forma diferente o con diferentes palabras.\n\n"
+        "Regla de salida:\n"
+        "- Responde únicamente con la palabra 'SI' o la palabra 'NO' en mayúsculas.\n"
+        "- NO incluyas introducciones, explicaciones ni signos de puntuación."
+    )
+    messages = [
+        {"role": "system", "content": prompt_sistema},
+        {"role": "user", "content": f"Pregunta A: '{q1}'\nPregunta B: '{q2}'"}
+    ]
+    try:
+        respuesta = _chat_with_ollama(messages, temperature=0.0)
+        respuesta = respuesta.strip().upper()
+        print(f"[LOG] Comparando equivalencia semántica:\n  - Q1: '{q1}'\n  - Q2: '{q2}'\n  - ¿Equivalentes?: {respuesta}")
+        return "SI" in respuesta
+    except Exception as e:
+        logger.warning("Error al comprobar equivalencia de preguntas: %s", e)
+        return False
+
+
 def buscar_en_db_qa(pregunta: str) -> Optional[dict]:
     coleccion = _get_collection()
     if coleccion is None:
         return None
     try:
         # Buscamos globalmente pares Q&A que tengan el tipo "qa_pair"
+        # Traemos hasta 5 resultados para evaluar si alguno es coincidente semántica o exactamente
         resultados = coleccion.query(
             query_texts=[pregunta],
-            n_results=1,
+            n_results=5,
             where={"type": "qa_pair"}
         )
         if not resultados:
@@ -79,17 +118,36 @@ def buscar_en_db_qa(pregunta: str) -> Optional[dict]:
         documents = resultados.get("documents")
         
         if ids and ids[0] and distances and distances[0] and metadatas and metadatas[0] and documents and documents[0]:
-            distancia = distances[0][0]
-            metadata = metadatas[0][0]
-            # Umbral de similitud: distancia <= 0.4 indica coincidencia semántica muy cercana
-            if distancia <= 0.4:
-                print(f"[LOG DE AGENTE] Coincidencia encontrada en DB para '{pregunta}'. Pregunta original: '{documents[0][0]}'. Distancia: {distancia}")
-                return {
-                    "question": documents[0][0],
-                    "answer": metadata.get("answer"),
-                    "question_type": metadata.get("question_type", "fija"),
-                    "source": "database_memory"
-                }
+            pregunta_norm = normalizar_texto(pregunta)
+            
+            # Recorremos los candidatos devueltos
+            for idx in range(len(ids[0])):
+                doc_original = documents[0][idx]
+                distancia = distances[0][idx]
+                metadata = metadatas[0][idx]
+                
+                # 1. Coincidencia de texto idéntico tras normalización básica (muy rápido, sin LLM)
+                if normalizar_texto(doc_original) == pregunta_norm:
+                    print(f"[LOG] Coincidencia exacta (normalizada) en DB para '{pregunta}'. Pregunta original: '{doc_original}'. Distancia: {distancia}")
+                    return {
+                        "question": doc_original,
+                        "answer": metadata.get("answer"),
+                        "question_type": metadata.get("question_type", "fija"),
+                        "source": "database_memory"
+                    }
+                
+                # 2. Coincidencia semántica con LLM si la distancia en DB es razonablemente cercana (umbral <= 0.70)
+                if distancia <= 0.70:
+                    if son_preguntas_equivalentes(pregunta, doc_original):
+                        print(f"[LOG] Coincidencia semántica confirmada por LLM para '{pregunta}'. Pregunta original: '{doc_original}'. Distancia: {distancia}")
+                        return {
+                            "question": doc_original,
+                            "answer": metadata.get("answer"),
+                            "question_type": metadata.get("question_type", "fija"),
+                            "source": "database_memory"
+                        }
+                    else:
+                        print(f"[LOG] Descartada coincidencia semántica por LLM entre '{pregunta}' y '{doc_original}' (Distancia: {distancia})")
     except Exception as e:
         logger.warning("Error buscando en base de datos de memoria: %s", e)
     return None
@@ -127,7 +185,7 @@ def obtener_contexto_db(pregunta: str) -> str:
                     # Es un snippet de internet o documento plano
                     return doc
             else:
-                print(f"[LOG DE AGENTE] Contexto de base de datos descartado por distancia muy alta ({distancia:.4f}) para: '{pregunta}'")
+                print(f"[LOG] Contexto de base de datos descartado por distancia muy alta ({distancia:.4f}) para: '{pregunta}'")
     except Exception as e:
         logger.warning("Error al obtener contexto de ChromaDB: %s", e)
     return ""
@@ -139,7 +197,7 @@ def guardar_en_db_qa(pregunta: str, respuesta: str, question_type: str, chat_id:
     if coleccion is None:
         return
     try:
-        print(f"[LOG DE AGENTE] Guardando par Q&A en la base de datos: '{pregunta}' -> '{respuesta[:50]}...'")
+        print(f"[LOG] Guardando par Q&A en la base de datos: '{pregunta}' -> '{respuesta[:50]}...'")
         coleccion.add(
             documents=[pregunta],
             metadatas=[{
@@ -668,15 +726,15 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
     import time
     chat_id_normalizado = _normalize_chat_id(chat_id)
     
-    print(f"\n[LOG DE AGENTE] ===== INICIO DE PROCESAMIENTO =====")
-    print(f"[LOG DE AGENTE] Pregunta recibida: '{pregunta}'")
-    print(f"[LOG DE AGENTE] ID de chat: '{chat_id_normalizado}'")
+    print(f"\n[LOG] ===== INICIO DE PROCESAMIENTO =====")
+    print(f"[LOG] Pregunta recibida: '{pregunta}'")
+    print(f"[LOG] ID de chat: '{chat_id_normalizado}'")
     
     ensure_chat(chat_id_normalizado)
     
     # 1. Obtener historial conversacional PREVIO (antes de guardar la pregunta actual)
     history = _get_conversational_history(chat_id_normalizado, limit=8)
-    print(f"[LOG DE AGENTE] Historial conversacional cargado ({len(history)} mensajes previos).")
+    print(f"[LOG] Historial conversacional cargado ({len(history)} mensajes previos).")
     
     # 2. Guardar la pregunta actual en la base de datos
     save_message(chat_id_normalizado, "user", pregunta)
@@ -689,7 +747,7 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
     yield {"type": "status", "content": "Revisando base de datos..."}
     coincidencia = buscar_en_db_qa(pregunta)
     if coincidencia:
-        print(f"[LOG DE AGENTE] [DB COINCIDENCIA] Retornando respuesta guardada de inmediato...")
+        print(f"[LOG] [DB COINCIDENCIA] Retornando respuesta guardada de inmediato...")
         answer = coincidencia["answer"]
         source = coincidencia["source"]
         q_type = coincidencia["question_type"]
@@ -700,14 +758,14 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             
         save_message(chat_id_normalizado, "assistant", answer, source=source, question_type=q_type)
         yield {"type": "done", "chat_id": chat_id_normalizado, "source": source, "answer": answer}
-        print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+        print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
         return
 
     # 4. Clasificar la pregunta pasándole el historial pre-cargado
     yield {"type": "status", "content": "Clasificando pregunta..."}
-    print(f"[LOG DE AGENTE] Ejecutando clasificación por IA con contexto...")
+    print(f"[LOG] Ejecutando clasificación por IA con contexto...")
     tipo_pregunta = clasificar_pregunta(pregunta, chat_id=chat_id_normalizado, history=history)
-    print(f"[LOG DE AGENTE] Clasificación obtenida: {tipo_pregunta.upper()}")
+    print(f"[LOG] Clasificación obtenida: {tipo_pregunta.upper()}")
 
     if tipo_pregunta == "saludo":
         yield {"type": "status", "content": "Generando saludo..."}
@@ -721,7 +779,7 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             },
         ] + history + [{"role": "user", "content": pregunta}]
         
-        print(f"[LOG DE AGENTE] [SALUDO] Enviando prompt a Ollama con contexto...")
+        print(f"[LOG] [SALUDO] Enviando prompt a Ollama con contexto...")
         try:
             response_gen = _chat_with_ollama(messages, temperature=0.2, stream=True)
             full_text = ""
@@ -731,13 +789,13 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     full_text += token
                     yield {"type": "token", "content": token}
             
-            print(f"[LOG DE AGENTE] [SALUDO] Respuesta generada: '{full_text}'")
+            print(f"[LOG] [SALUDO] Respuesta generada: '{full_text}'")
             save_message(chat_id_normalizado, "assistant", full_text, source="greeting", question_type="saludo")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "greeting", "answer": full_text}
-            print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+            print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
             return
         except Exception as e:
-            print(f"[LOG DE AGENTE] [ERROR SALUDO] Fallo en Ollama: {e}")
+            print(f"[LOG] [ERROR SALUDO] Fallo en Ollama: {e}")
             error_msg = "Hola, ¿en qué te ayudo?"
             for t in _yield_string_as_tokens(error_msg):
                 yield t
@@ -758,7 +816,7 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             },
         ] + history + [{"role": "user", "content": pregunta}]
         
-        print(f"[LOG DE AGENTE] [INCOMPLETA] Enviando prompt a Ollama con contexto...")
+        print(f"[LOG] [INCOMPLETA] Enviando prompt a Ollama con contexto...")
         try:
             response_gen = _chat_with_ollama(messages, temperature=0.1, stream=True)
             full_text = ""
@@ -768,13 +826,13 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     full_text += token
                     yield {"type": "token", "content": token}
             
-            print(f"[LOG DE AGENTE] [INCOMPLETA] Respuesta generada: '{full_text}'")
+            print(f"[LOG] [INCOMPLETA] Respuesta generada: '{full_text}'")
             save_message(chat_id_normalizado, "assistant", full_text, source="incomplete", question_type="incompleta")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "incomplete", "answer": full_text}
-            print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+            print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
             return
         except Exception as e:
-            print(f"[LOG DE AGENTE] [ERROR INCOMPLETA] Fallo en Ollama: {e}")
+            print(f"[LOG] [ERROR INCOMPLETA] Fallo en Ollama: {e}")
             error_msg = "¿Puedes completar tu pregunta?"
             for t in _yield_string_as_tokens(error_msg):
                 yield t
@@ -794,56 +852,56 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             },
         ] + history + [{"role": "user", "content": pregunta}]
         
-        print(f"[LOG DE AGENTE] [VARIABLE] Evaluando si el modelo conoce la respuesta de inmediato con contexto...")
+        print(f"[LOG] [VARIABLE] Evaluando si el modelo conoce la respuesta de inmediato con contexto...")
         respuesta_llm = ""
         try:
             respuesta_llm = _chat_with_ollama(messages, temperature=0.0)
-            print(f"[LOG DE AGENTE] [VARIABLE] Respuesta tentativa del LLM: '{respuesta_llm}'")
+            print(f"[LOG] [VARIABLE] Respuesta tentativa del LLM: '{respuesta_llm}'")
         except Exception as e:
-            print(f"[LOG DE AGENTE] [VARIABLE] Error al llamar Ollama: {e}")
+            print(f"[LOG] [VARIABLE] Error al llamar Ollama: {e}")
             respuesta_llm = "NO_SE"
 
         if "NO_SE" not in respuesta_llm.upper() and respuesta_llm.strip():
-            print(f"[LOG DE AGENTE] [VARIABLE] LLM conoce la respuesta. Transmitiendo en tiempo real y guardando...")
+            print(f"[LOG] [VARIABLE] LLM conoce la respuesta. Transmitiendo en tiempo real y guardando...")
             for t in _yield_string_as_tokens(respuesta_llm):
                 yield t
             # Guardamos en la base de datos
             guardar_en_db_qa(pregunta, respuesta_llm, "variable", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", respuesta_llm, source="llm_variable", question_type="variable")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "llm_variable", "answer": respuesta_llm}
-            print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+            print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
             return
 
-        print(f"[LOG DE AGENTE] [VARIABLE] El LLM respondió NO_SE o requiere datos. Iniciando búsqueda web con contexto...")
+        print(f"[LOG] [VARIABLE] El LLM respondió NO_SE o requiere datos. Iniciando búsqueda web con contexto...")
         yield {"type": "status", "content": "Buscando en Internet..."}
         
         # Generar query de búsqueda optimizado con el contexto del historial
         query_busqueda = generar_query_busqueda(pregunta, history)
-        print(f"[LOG DE AGENTE] [VARIABLE] Query de búsqueda generado con contexto: '{query_busqueda}'")
+        print(f"[LOG] [VARIABLE] Query de búsqueda generado con contexto: '{query_busqueda}'")
         
-        print(f"[LOG DE AGENTE] [VARIABLE] Ejecutando búsqueda en DuckDuckGo para: '{query_busqueda}'")
+        print(f"[LOG] [VARIABLE] Ejecutando búsqueda en DuckDuckGo para: '{query_busqueda}'")
         info_internet = buscar_en_internet(query_busqueda)
-        print(f"[LOG DE AGENTE] [VARIABLE] Información recuperada de internet: {info_internet[:200]}...")
+        print(f"[LOG] [VARIABLE] Información recuperada de internet: {info_internet[:200]}...")
 
         if not info_internet:
             if any(palabra in pregunta.lower() for palabra in ("día", "fecha", "hoy", "date")):
                 fecha_actual = datetime.now().strftime("%d-%m-%Y")
                 ans = f"Hoy es {fecha_actual}."
-                print(f"[LOG DE AGENTE] [VARIABLE] Fallback de fecha local activado: '{ans}'")
+                print(f"[LOG] [VARIABLE] Fallback de fecha local activado: '{ans}'")
                 for t in _yield_string_as_tokens(ans):
                     yield t
                 save_message(chat_id_normalizado, "assistant", ans, source="system_date", question_type="variable")
                 yield {"type": "done", "chat_id": chat_id_normalizado, "source": "system_date", "answer": ans}
-                print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+                print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
                 return
 
             ans = f"No encontré información actualizada sobre: {pregunta}"
-            print(f"[LOG DE AGENTE] [VARIABLE] Sin resultados. Retornando fallback: '{ans}'")
+            print(f"[LOG] [VARIABLE] Sin resultados. Retornando fallback: '{ans}'")
             for t in _yield_string_as_tokens(ans):
                 yield t
             save_message(chat_id_normalizado, "assistant", ans, source="internet", question_type="variable")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": ans}
-            print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+            print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
             return
 
         yield {"type": "status", "content": "Redactando respuesta desde Internet..."}
@@ -862,7 +920,7 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             },
         ] + history + [{"role": "user", "content": prompt_final}]
         
-        print(f"[LOG DE AGENTE] [VARIABLE] Enviando información de Internet al LLM para redacción final con contexto...")
+        print(f"[LOG] [VARIABLE] Enviando información de Internet al LLM para redacción final con contexto...")
         try:
             response_gen = _chat_with_ollama(final_messages, temperature=0.2, stream=True)
             full_text = ""
@@ -872,15 +930,15 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     full_text += token
                     yield {"type": "token", "content": token}
             
-            print(f"[LOG DE AGENTE] [VARIABLE] Redacción final completada: '{full_text}'")
+            print(f"[LOG] [VARIABLE] Redacción final completada: '{full_text}'")
             # Guardamos en la base de datos
             guardar_en_db_qa(pregunta, full_text or info_internet, "variable", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", full_text or info_internet, source="internet", question_type="variable")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": full_text or info_internet}
-            print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+            print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
             return
         except Exception as e:
-            print(f"[LOG DE AGENTE] [ERROR VARIABLE] Error al redactar respuesta: {e}. Enviando datos puros de internet.")
+            print(f"[LOG] [ERROR VARIABLE] Error al redactar respuesta: {e}. Enviando datos puros de internet.")
             ans = info_internet
             for t in _yield_string_as_tokens(ans):
                 yield t
@@ -888,11 +946,11 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             guardar_en_db_qa(pregunta, ans, "variable", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", ans, source="internet", question_type="variable")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": ans}
-            print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+            print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
             return
 
     # Pregunta Fija (RAG)
-    print(f"[LOG DE AGENTE] [FIJA] Buscando en base de conocimientos ChromaDB...")
+    print(f"[LOG] [FIJA] Buscando en base de conocimientos ChromaDB...")
     yield {"type": "status", "content": "Buscando en base de conocimientos..."}
     contexto = obtener_contexto_db(pregunta)
 
@@ -912,36 +970,36 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
         },
     ] + history + [{"role": "user", "content": prompt_evaluacion}]
 
-    print(f"[LOG DE AGENTE] [FIJA] Enviando pregunta de evaluación al LLM...")
+    print(f"[LOG] [FIJA] Enviando pregunta de evaluación al LLM...")
     respuesta_llm = ""
     try:
         respuesta_llm = _chat_with_ollama(eval_messages, temperature=0.0)
-        print(f"[LOG DE AGENTE] [FIJA] Respuesta del LLM a evaluación: '{respuesta_llm}'")
+        print(f"[LOG] [FIJA] Respuesta del LLM a evaluación: '{respuesta_llm}'")
     except Exception as e:
-        print(f"[LOG DE AGENTE] [FIJA] Error al llamar a Ollama para evaluación: {e}")
+        print(f"[LOG] [FIJA] Error al llamar a Ollama para evaluación: {e}")
         respuesta_llm = "NO_SE"
 
     if "NO_SE" not in respuesta_llm.upper() and respuesta_llm.strip():
-        print(f"[LOG DE AGENTE] [FIJA] El LLM conoce la respuesta segura. Transmitiendo en tiempo real y guardando...")
+        print(f"[LOG] [FIJA] El LLM conoce la respuesta segura. Transmitiendo en tiempo real y guardando...")
         for t in _yield_string_as_tokens(respuesta_llm):
             yield t
         # Guardamos en la base de datos
         guardar_en_db_qa(pregunta, respuesta_llm, "fija", chat_id_normalizado)
         save_message(chat_id_normalizado, "assistant", respuesta_llm, source="local_or_model", question_type="fija")
         yield {"type": "done", "chat_id": chat_id_normalizado, "source": "local_or_model", "answer": respuesta_llm}
-        print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+        print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
         return
 
-    print(f"[LOG DE AGENTE] [FIJA] El LLM respondió NO_SE. Iniciando búsqueda web de fallback con contexto...")
+    print(f"[LOG] [FIJA] El LLM respondió NO_SE. Iniciando búsqueda web de fallback con contexto...")
     yield {"type": "status", "content": "Buscando información en Internet..."}
     
     # Generar query de búsqueda optimizado con el contexto del historial
     query_busqueda = generar_query_busqueda(pregunta, history)
-    print(f"[LOG DE AGENTE] [FIJA] Query de búsqueda generado con contexto: '{query_busqueda}'")
+    print(f"[LOG] [FIJA] Query de búsqueda generado con contexto: '{query_busqueda}'")
     
-    print(f"[LOG DE AGENTE] [FIJA] Ejecutando búsqueda en DuckDuckGo para: '{query_busqueda}'")
+    print(f"[LOG] [FIJA] Ejecutando búsqueda en DuckDuckGo para: '{query_busqueda}'")
     info_internet = buscar_en_internet(query_busqueda)
-    print(f"[LOG DE AGENTE] [FIJA] Información de Internet recuperada: {info_internet[:200]}...")
+    print(f"[LOG] [FIJA] Información de Internet recuperada: {info_internet[:200]}...")
 
     if info_internet:
         yield {"type": "status", "content": "Redactando respuesta desde Internet..."}
@@ -956,7 +1014,7 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             },
         ] + history + [{"role": "user", "content": prompt_final}]
         
-        print(f"[LOG DE AGENTE] [FIJA] Enviando información de Internet al LLM para redacción final con contexto...")
+        print(f"[LOG] [FIJA] Enviando información de Internet al LLM para redacción final con contexto...")
         try:
             response_gen = _chat_with_ollama(final_messages, temperature=0.2, stream=True)
             full_text = ""
@@ -966,15 +1024,15 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
                     full_text += token
                     yield {"type": "token", "content": token}
             
-            print(f"[LOG DE AGENTE] [FIJA] Redacción final completada: '{full_text}'")
+            print(f"[LOG] [FIJA] Redacción final completada: '{full_text}'")
             # Guardamos en la base de datos
             guardar_en_db_qa(pregunta, full_text or info_internet, "fija", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", full_text or info_internet, source="internet", question_type="fija")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": full_text or info_internet}
-            print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+            print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
             return
         except Exception as e:
-            print(f"[LOG DE AGENTE] [ERROR FIJA] Error al redactar respuesta final: {e}. Enviando datos de internet puros.")
+            print(f"[LOG] [ERROR FIJA] Error al redactar respuesta final: {e}. Enviando datos de internet puros.")
             ans = info_internet
             for t in _yield_string_as_tokens(ans):
                 yield t
@@ -982,14 +1040,14 @@ def consultar_agente_stream(pregunta: str, chat_id: Optional[str] = None) -> Gen
             guardar_en_db_qa(pregunta, ans, "fija", chat_id_normalizado)
             save_message(chat_id_normalizado, "assistant", ans, source="internet", question_type="fija")
             yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": ans}
-            print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+            print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
             return
     else:
         ans = "No se encontró información en internet."
-        print(f"[LOG DE AGENTE] [FIJA] No se obtuvieron resultados en Internet. Retornando fallback: '{ans}'")
+        print(f"[LOG] [FIJA] No se obtuvieron resultados en Internet. Retornando fallback: '{ans}'")
         for t in _yield_string_as_tokens(ans):
             yield t
         save_message(chat_id_normalizado, "assistant", ans, source="internet", question_type="fija")
         yield {"type": "done", "chat_id": chat_id_normalizado, "source": "internet", "answer": ans}
-        print(f"[LOG DE AGENTE] ===== FIN DE PROCESAMIENTO =====")
+        print(f"[LOG] ===== FIN DE PROCESAMIENTO =====")
         return
